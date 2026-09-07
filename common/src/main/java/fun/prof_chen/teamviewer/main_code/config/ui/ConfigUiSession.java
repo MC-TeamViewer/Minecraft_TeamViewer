@@ -884,7 +884,7 @@ public final class ConfigUiSession implements ConfigUiController {
         return switch (stage) {
             case CONNECTED -> "connection.status.connected";
             case CONNECTING -> "connection.status.connecting";
-            case WS_CONNECTED_HANDSHAKING -> "connection.status.ws_connected_handshaking";
+            case CONNECTED_HANDSHAKING -> "connection.status.connected_handshaking";
             case FAILED -> "connection.status.failed";
             case DISCONNECTED -> "connection.status.disconnected";
         };
@@ -894,7 +894,7 @@ public final class ConfigUiSession implements ConfigUiController {
         return switch (stage) {
             case CONNECTED -> 0x00FF00;
             case CONNECTING -> 0xFFFF55;
-            case WS_CONNECTED_HANDSHAKING -> 0x55FFFF;
+            case CONNECTED_HANDSHAKING -> 0x55FFFF;
             case FAILED -> 0xFFAA00;
             case DISCONNECTED -> 0xFF0000;
         };

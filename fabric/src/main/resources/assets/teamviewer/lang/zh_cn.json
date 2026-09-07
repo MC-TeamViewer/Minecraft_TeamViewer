@@ -325,5 +325,5 @@
   "connection.status.connecting": "正在连接",
   "connection.status.failed": "连接失败",
   "connection.status.disconnected": "未连接",
-  "connection.status.ws_connected_handshaking": "WS已连接，业务握手中"
+  "connection.status.connected_handshaking": "已连接，业务握手中"
 }

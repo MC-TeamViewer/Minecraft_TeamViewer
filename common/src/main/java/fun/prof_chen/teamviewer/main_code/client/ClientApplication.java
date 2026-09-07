@@ -15,7 +15,10 @@ import fun.prof_chen.teamviewer.main_code.config.ui.ConfigUiSessions;
 import fun.prof_chen.teamviewer.main_code.model.RemotePlayerInfo;
 import fun.prof_chen.teamviewer.main_code.model.LastSeenPlayerInfo;
 import fun.prof_chen.teamviewer.main_code.model.SharedWaypointInfo;
+import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportProcess;
 import fun.prof_chen.teamviewer.main_code.network.transport.OkHttpTransportProcess;
+import fun.prof_chen.teamviewer.main_code.network.transport.SchemeRoutingTransportProcess;
+import fun.prof_chen.teamviewer.main_code.network.transport.quic.QuicTransportProcess;
 import fun.prof_chen.teamviewer.main_code.plugin.IntegrationPluginManager;
 import fun.prof_chen.teamviewer.main_code.plugin.PluginHostAccess;
 import fun.prof_chen.teamviewer.main_code.plugin.PluginNotificationSink;
@@ -54,8 +57,14 @@ public final class ClientApplication<W, H> implements ClientEventHandler<W, H> {
         Map<UUID, RemotePlayerInfo> remotePlayers = new ConcurrentHashMap<>();
         Map<UUID, LastSeenPlayerInfo> lastSeenPlayers = new ConcurrentHashMap<>();
         Map<String, SharedWaypointInfo> sharedWaypoints = new ConcurrentHashMap<>();
+        // 传输门按 URL scheme 每次连接时显式选择(quic:// → 裸 QUIC,其余 → WS),
+        // 不自动回退;QUIC 门的 netty bundle 解包缓存放在配置目录下的专属子目录。
+        TransportProcess transport = new SchemeRoutingTransportProcess(
+                new OkHttpTransportProcess(),
+                new QuicTransportProcess(
+                        adapters.runtimeGateway().getConfigDirectory().resolve("team-view-relay-quic")));
         NetworkManager network = new NetworkManager(
-                remotePlayers, lastSeenPlayers, adapters.runtimeGateway(), new OkHttpTransportProcess());
+                remotePlayers, lastSeenPlayers, adapters.runtimeGateway(), transport);
         NetworkManager.setConfigGateway(config);
         coordinator = new ClientCoordinator(config, network, adapters.gameClientBridge());
         coordinator.configurePlayerRelationSupport(integrations);

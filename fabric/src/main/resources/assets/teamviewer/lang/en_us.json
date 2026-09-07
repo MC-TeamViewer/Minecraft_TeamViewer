@@ -325,5 +325,5 @@
   "connection.status.connecting": "Connecting",
   "connection.status.failed": "Failed",
   "connection.status.disconnected": "Disconnected",
-  "connection.status.ws_connected_handshaking": "WS connected, handshaking"
+  "connection.status.connected_handshaking": "Connected, handshaking"
 }

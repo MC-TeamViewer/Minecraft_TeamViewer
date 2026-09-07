@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.10.0-alpha.1-proto0.8.0 - 2026-09-08
+
+- 新增裸 QUIC 传输门（客户端侧，实验性）：服务器地址以 `quic://host:port` 填写即走 QUIC 门，其余
+  （`ws://`/`wss://`）仍走 WebSocket；每次连接按 URL scheme 显式选择，失败不自动回退。门会话约定与
+  TeamViewRelay-Protocol README"传输门约定"一致：客户端 1 条双向流上行 + 服务端 1 条单向流下行，
+  `[varint LEB128 长度][payload]` 分帧（上限 8 MiB），ALPN `teamviewrelay/v1`，10 秒首帧握手超时。
+- 实现为 child-first 类加载器隔离的 netty 4.2（`4.2.17.Final`）bundle：quiche native 以 JNI
+  RegisterNatives 按原名绑定、不可重定位，而未重定位的 netty 4.2 又与 Minecraft 自带 netty 4.1
+  同包名冲突——因此编译类 jar、适配核 jar（`teamviewer-quic-core.jar`）与平台 native jar 以资源形式
+  随 mod 分发，运行时解包进只对 `io.netty.**` 与适配核包 child-first 的独立 ClassLoader，业务接口
+  （SocketProcess 等）与主类路径保持同一类身份。
+- netty native 分发：三大主力平台（windows-x86_64 / linux-x86_64 / osx-aarch_64）内嵌随 mod；
+  冷门两个（linux-aarch_64 / osx-x86_64）首连时从 Maven Central 下载并以编译期内置 SHA-256 校验；
+  校验失败或无官方包的平台 QUIC 不可用（保持 WS 可用，显式切换）。内嵌 bundle 每次进程首次加载
+  都从 mod 资源原样重写缓存目录，mod 升级后不会复用旧字节码。
+- TLS 信任复用 `allowInsecureTls` 语义：开启时信任所有证书（自签/试用场景），关闭时走系统信任库；
+  系统代理对 QUIC（UDP）无语义，忽略；`enableCompression` 在 zstd 压缩落地前忽略。
+- 连接状态 `WS_CONNECTED_HANDSHAKING` 更名为 `CONNECTED_HANDSHAKING`，对应界面文案键同步为
+  `connection.status.connected_handshaking`（"Connected, handshaking" / "已连接，业务握手中"）。
+- Mod 版本升级为 `v0.10.0-alpha.1`；网络协议仍为 `0.8.0`（QUIC 门需要后端 `1.2.0-alpha.5` 及以上）。
+
 ## v0.9.0-proto0.8.0 - 2026-09-07
 
 - 网络协议升级为 `0.8.0`：外部数据源可在握手中声明数据集格式、覆盖范围和 stale 阈值，并通过独立的

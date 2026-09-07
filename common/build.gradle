@@ -8,6 +8,13 @@ base {
     archivesName = "${project.archives_base_name}-common"
 }
 
+configurations {
+    // QUIC 门的自包含 netty 4.2 bundle:原样打包进资源目录,运行时由
+    // QuicTransportProcess 解包进 child-first ClassLoader,绝不进主类路径
+    // (与 Minecraft 自带的 netty 4.1 同包名隔离)。
+    quicBundle
+}
+
 dependencies {
     api project(":common-sdk")
     implementation "com.google.code.gson:gson:${project.gson_version}"
@@ -17,6 +24,18 @@ dependencies {
     implementation "com.google.protobuf:protobuf-java:${project.protobuf_version}"
     implementation "com.google.protobuf:protobuf-java-util:${project.protobuf_version}"
     implementation "org.luaj:luaj-jse:${project.luaj_version}"
+    // 仅编译期可见(QuicTransportCore);运行期一律走 quicBundle 资源。
+    compileOnly "io.netty:netty-codec-classes-quic:${project.netty_version}"
+    quicBundle "io.netty:netty-codec-classes-quic:${project.netty_version}"
+    quicBundle "io.netty:netty-common:${project.netty_version}"
+    quicBundle "io.netty:netty-buffer:${project.netty_version}"
+    quicBundle "io.netty:netty-transport:${project.netty_version}"
+    quicBundle "io.netty:netty-resolver:${project.netty_version}"
+    quicBundle "io.netty:netty-codec-base:${project.netty_version}"
+    quicBundle "io.netty:netty-handler:${project.netty_version}"
+    quicBundle "io.netty:netty-codec-native-quic:${project.netty_version}:linux-x86_64"
+    quicBundle "io.netty:netty-codec-native-quic:${project.netty_version}:osx-aarch_64"
+    quicBundle "io.netty:netty-codec-native-quic:${project.netty_version}:windows-x86_64"
     testImplementation platform("org.junit:junit-bom:5.13.4")
     testImplementation "org.junit.jupiter:junit-jupiter"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
@@ -116,10 +135,36 @@ tasks.register("generateProtoJava") {
     }
 }
 
+// QUIC 门适配核(QuicTransportCore + QuicFrameCodec)单独成 jar 进资源:
+// 运行时 child-first ClassLoader 从它定义这两个类,保证其 io.netty 4.2 引用
+// 解析到 child URL 而非 parent 类路径(否则 parent 会先定义该类并与 MC 自带
+// netty 4.1 错绑)。壳类 QuicTransportProcess 留在主 jar。
+def quicCoreJar = tasks.register("quicCoreJar", Jar) {
+    archiveBaseName = "teamviewer-quic-core"
+    archiveClassifier = ""
+    from(sourceSets.main.java.classesDirectory)
+    // 两个适配核类及其全部嵌套/匿名内部类($* 通配,匿名 handler/trustManager
+    // 也必须在 child 内定义,跨 loader 包级可见性会直接 IllegalAccessError)。
+    include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicTransportCore.class"
+    include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicTransportCore\$*.class"
+    include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicFrameCodec.class"
+    include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicFrameCodec\$*.class"
+}
+
 processResources {
     inputs.property "network_protocol_version", project.network_protocol_version
     inputs.property "network_min_compatible_protocol_version", project.network_min_compatible_protocol_version
     filteringCharset = "UTF-8"
+
+    // QUIC 门 netty bundle 以 jar 原样进资源;运行时解包进 child-first
+    // ClassLoader(下载类 native 另有 SHA-256 校验,见 QuicTransportProcess)。
+    from(configurations.quicBundle) {
+        into "META-INF/teamviewer/quic"
+    }
+    from(quicCoreJar.flatMap { it.archiveFile }) {
+        into "META-INF/teamviewer/quic"
+        rename { "teamviewer-quic-core.jar" }
+    }
 
     filesMatching("teamviewer-build.properties") {
         expand(

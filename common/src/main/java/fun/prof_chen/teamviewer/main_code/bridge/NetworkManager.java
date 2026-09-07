@@ -92,7 +92,7 @@ public class NetworkManager {
 	public enum ConnectionStage {
 		DISCONNECTED,
 		CONNECTING,
-		WS_CONNECTED_HANDSHAKING,
+		CONNECTED_HANDSHAKING,
 		CONNECTED,
 		FAILED
 	}
@@ -1291,7 +1291,7 @@ public class NetworkManager {
 			}
 			transportOpen = true;
 			isConnected = false;
-			connectionStage = ConnectionStage.WS_CONNECTED_HANDSHAKING;
+			connectionStage = ConnectionStage.CONNECTED_HANDSHAKING;
 			lastConnectionError = "";
 			reconnectAttemptsRemaining.set(maxReconnectAttempts);
 			resetNegotiationState();
@@ -2746,7 +2746,7 @@ public class NetworkManager {
 			LOGGER.debug("Ignoring handshake send for stale attempt {}", attemptId);
 			return;
 		}
-		if (socket == null || !transportOpen || connectionStage != ConnectionStage.WS_CONNECTED_HANDSHAKING) {
+		if (socket == null || !transportOpen || connectionStage != ConnectionStage.CONNECTED_HANDSHAKING) {
 			return;
 		}
 		if (handshakeSent) {
