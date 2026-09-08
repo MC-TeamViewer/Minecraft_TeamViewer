@@ -13,6 +13,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
+import io.netty.handler.codec.quic.QuicCongestionControlAlgorithm;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.DatagramChannel;
@@ -95,6 +96,7 @@ final class QuicTransportCore {
                 .handler(new QuicClientCodecBuilder()
                         .sslContext(sslContext)
                         .maxIdleTimeout(IDLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        .congestionControlAlgorithm(QuicCongestionControlAlgorithm.BBR)
                         .initialMaxData(1 << 20)
                         .initialMaxStreamDataBidirectionalLocal(1 << 18)
                         .initialMaxStreamDataBidirectionalRemote(1 << 18)
