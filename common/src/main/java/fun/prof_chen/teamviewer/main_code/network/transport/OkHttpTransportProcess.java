@@ -54,6 +54,17 @@ public final class OkHttpTransportProcess implements TransportProcess {
     private static final long CLOSE_TIMEOUT_MS = 60_000L;
     private static final long DEFAULT_MINIMUM_DEFLATE_SIZE = 1_024L;
 
+    /**
+     * 压缩套 WS 子协议(与后端命名表一致)。客户端按偏好序提供候选,服务端
+     * 择一并原样回执 101 的 Sec-WebSocket-Protocol(确认制,零额外 RTT);
+     * 不回执即未协商,按既有回退链降级(deflate/明文)。WS 门无 datagram,
+     * 故只提供 zstd/plain 两套、绝不提供 zstd-dict——服务端回执必须取自
+     * 客户端列表(RFC 6455),字典压缩的帧永远不会到达 mod。
+     */
+    private static final String SUBPROTOCOL_ZSTD = "teamviewrelay.zstd.v1";
+    private static final String SUBPROTOCOL_PLAIN = "teamviewrelay.plain.v1";
+    private static final String OFFERED_SUBPROTOCOLS = SUBPROTOCOL_ZSTD + ", " + SUBPROTOCOL_PLAIN;
+
     @Override
     public SocketProcess connect(String uri, TransportOptions options, TransportListener listener) {
         Objects.requireNonNull(options, "options");
@@ -152,6 +163,7 @@ public final class OkHttpTransportProcess implements TransportProcess {
         private volatile String receivedCloseReason = "";
         private volatile TrackingWebSocketWriter writer;
         private volatile TrackingWebSocketReader reader;
+        private volatile ZstdStreamDecoder zstdDecoder;
         private volatile RealWebSocket.Streams streams;
         private volatile WebSocketExtensionsInfo extensions = WebSocketExtensionsInfo.disabled();
         private final AtomicBoolean terminalNotified = new AtomicBoolean(false);
@@ -177,7 +189,11 @@ public final class OkHttpTransportProcess implements TransportProcess {
             String webSocketKey = WebSocketProtocolUtil.randomWebSocketKey(random);
             requestBuilder.header("Sec-WebSocket-Key", webSocketKey);
             if (compressionRequested) {
+                // 压缩套与 permessage-deflate 同头竞争,回退链:zstd → deflate
+                // →明文。新后端择 teamviewrelay 子协议并回执(不再回执扩展);
+                // 旧后端忽略该头、照常回执 permessage-deflate,走原路径。
                 requestBuilder.header("Sec-WebSocket-Extensions", "permessage-deflate");
+                requestBuilder.header("Sec-WebSocket-Protocol", OFFERED_SUBPROTOCOLS);
             }
             Request request = requestBuilder.build();
 
@@ -196,8 +212,25 @@ public final class OkHttpTransportProcess implements TransportProcess {
                     try {
                         checkUpgradeSuccess(response, exchange, webSocketKey);
                         openedStreams = exchange.newWebSocketStreams();
+                        // 服务端确认制:回执值必须为空(未协商,旧后端)或取自
+                        // 客户端列表(RFC 6455);zstd 与 permessage-deflate 互斥,
+                        // 同回执属服务端违规。
+                        String selectedSubprotocol = response.header("Sec-WebSocket-Protocol", "");
+                        boolean zstdNegotiated = SUBPROTOCOL_ZSTD.equals(selectedSubprotocol);
+                        if (!zstdNegotiated && !selectedSubprotocol.isEmpty()
+                                && !SUBPROTOCOL_PLAIN.equals(selectedSubprotocol)) {
+                            throw new ProtocolException(
+                                    "Server selected unexpected WebSocket subprotocol: " + selectedSubprotocol);
+                        }
                         WebSocketExtensionsInfo negotiated = WebSocketExtensionsInfo.parse(response, compressionRequested);
-                        initStreams(openedStreams, negotiated);
+                        if (zstdNegotiated && negotiated.perMessageDeflate()) {
+                            throw new ProtocolException(
+                                    "Server negotiated permessage-deflate together with the zstd subprotocol");
+                        }
+                        if (zstdNegotiated) {
+                            negotiated = WebSocketExtensionsInfo.disabled();
+                        }
+                        initStreams(openedStreams, negotiated, zstdNegotiated);
                         String negotiatedExtensions = response.header("Sec-WebSocket-Extensions", "");
                         listener.onOpen(negotiatedExtensions == null ? "" : negotiatedExtensions);
                         loopReader();
@@ -215,11 +248,18 @@ public final class OkHttpTransportProcess implements TransportProcess {
             });
         }
 
-        private void initStreams(RealWebSocket.Streams openedStreams, WebSocketExtensionsInfo negotiated) {
+        private void initStreams(RealWebSocket.Streams openedStreams, WebSocketExtensionsInfo negotiated, boolean zstdNegotiated) {
             configureWebSocketStreamTimeouts(openedStreams);
             synchronized (stateLock) {
                 this.streams = openedStreams;
                 this.extensions = negotiated;
+                if (zstdNegotiated) {
+                    try {
+                        this.zstdDecoder = new ZstdStreamDecoder(this::deliverZstdChunk);
+                    } catch (IOException error) {
+                        throw new IllegalStateException("zstd decoder init failed", error);
+                    }
+                }
                 this.writer = new TrackingWebSocketWriter(
                         true,
                         openedStreams.getSink(),
@@ -337,7 +377,23 @@ public final class OkHttpTransportProcess implements TransportProcess {
 
         @Override
         public void onReadMessage(byte[] bytes) {
+            ZstdStreamDecoder currentDecoder = zstdDecoder;
+            if (currentDecoder != null) {
+                // zstd 套下行:每条 binary 消息 = 连续 zstd 流的一个压缩块,
+                // 解压产出即 envelope 本体。解压失败属协议违规:显式断连,
+                // 不得静默吞帧。上行恒 plain(压缩套单向语义),writer 未改。
+                try {
+                    currentDecoder.push(bytes);
+                } catch (IOException error) {
+                    fail(error);
+                }
+                return;
+            }
             listener.onBinaryMessage(bytes);
+        }
+
+        private void deliverZstdChunk(byte[] envelope) {
+            listener.onBinaryMessage(envelope);
         }
 
         @Override
@@ -442,6 +498,7 @@ public final class OkHttpTransportProcess implements TransportProcess {
         private void shutdownResources() {
             closeQuietly(reader);
             closeQuietly(writer);
+            closeQuietly(zstdDecoder);
             closeQuietly(streams);
             shutdownExecutors();
         }

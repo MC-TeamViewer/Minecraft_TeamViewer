@@ -51,6 +51,8 @@ dependencies {
     sharedNested "org.jetbrains.kotlin:kotlin-stdlib:${project.kotlin_version}"
     sharedNested "com.google.protobuf:protobuf-java:${project.protobuf_version}"
     sharedNested "com.google.protobuf:protobuf-java-util:${project.protobuf_version}"
+    // 压缩套下行解压;vanilla 未捆绑 zstd,原样嵌套(与 Gson/Jackson 情形不同)
+    sharedNested "com.github.luben:zstd-jni:${project.zstd_jni_version}"
     sharedNested "org.luaj:luaj-jse:${project.luaj_version}"
 }
 

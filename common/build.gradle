@@ -23,6 +23,9 @@ dependencies {
     compileOnly "org.slf4j:slf4j-api:${project.slf4j_version}"
     implementation "com.google.protobuf:protobuf-java:${project.protobuf_version}"
     implementation "com.google.protobuf:protobuf-java-util:${project.protobuf_version}"
+    // 压缩套下行解压(zstd-jni 与 vanilla 无重叠,Minecraft 未捆绑 zstd,可
+    // 原样嵌套;1.20.5+ 的区块压缩用的是 lz4-java,见 1.21 版本 JSON)
+    implementation "com.github.luben:zstd-jni:${project.zstd_jni_version}"
     implementation "org.luaj:luaj-jse:${project.luaj_version}"
     // 仅编译期可见(QuicTransportCore);运行期一律走 quicBundle 资源。
     compileOnly "io.netty:netty-codec-classes-quic:${project.netty_version}"

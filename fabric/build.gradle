@@ -294,6 +294,11 @@ dependencies {
     implementation "com.google.protobuf:protobuf-java-util:${project.protobuf_version}"
     include "com.google.protobuf:protobuf-java-util:${project.protobuf_version}"
 
+    // 压缩套下行解压;vanilla 未捆绑 zstd,原样嵌套(Minecraft 1.20.5+ 区块
+    // 压缩用的是 lz4-java,与 zstd-jni 无重叠)
+    implementation "com.github.luben:zstd-jni:${project.zstd_jni_version}"
+    include "com.github.luben:zstd-jni:${project.zstd_jni_version}"
+
     implementation "org.luaj:luaj-jse:${project.luaj_version}"
     include "org.luaj:luaj-jse:${project.luaj_version}"
 
@@ -925,7 +930,8 @@ def verifyStandaloneArtifact = tasks.register("verifyStandaloneArtifact") {
             def nested = entryNames.findAll { it.startsWith("META-INF/jars/") && it.endsWith(".jar") }
             def requiredNestedPrefixes = [
                     "TeamViewRelay-common-", "TeamViewRelay-common-sdk-",
-                    "okhttp-", "okio-jvm-", "kotlin-stdlib-", "protobuf-java-", "protobuf-java-util-", "luaj-jse-"
+                    "okhttp-", "okio-jvm-", "kotlin-stdlib-", "protobuf-java-", "protobuf-java-util-", "luaj-jse-",
+                    "zstd-jni-"
             ]
             requiredNestedPrefixes.each { prefix ->
                 def matches = nested.findAll { name ->

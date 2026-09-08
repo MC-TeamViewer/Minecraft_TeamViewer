@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.10.0-alpha.2-proto0.8.0 - 2026-09-08
+
+- 两扇门接入压缩套下行 zstd（`enableCompression` 生效，协议需后端 `1.2.0-alpha.6` 及以上）：
+  - WS 门：握手请求新增 `Sec-WebSocket-Protocol: teamviewrelay.zstd.v1, teamviewrelay.plain.v1`
+    （与 permessage-deflate 同头竞争，回退链 zstd → deflate → 明文不变；旧后端忽略该头照常走
+    deflate）。服务端回执 `teamviewrelay.zstd.v1` 即协商成立：每条下行 binary 消息 = 连续 zstd
+    流的一个压缩块，经持久解压器解码后交付；上行恒 plain。zstd 与 permessage-deflate 互斥，
+    服务端同回执两者按协议违规断连；回执列表外子协议同样显式报错（RFC 6455）。
+  - QUIC 门：ALPN 偏好序改为 `[teamviewrelay/v1+zstd, teamviewrelay/v1]`；协商为 +zstd 时下行
+    帧载荷 = 连续 zstd 流的压缩块，解压后经回调交付。不提供 `+zstd-dict`：本门收不到 datagram
+    （netty-quic 未开 datagram 选项），字典模式无用武之地。
+  - 语义与后端/网页脚本同款（TeamViewRelay-Protocol README"压缩套"）：压缩套为单向，仅下行
+    （服务端 → 客户端）压缩；解压失败属协议违规，显式断连不静默吞帧；单次交付上限 8 MiB、
+    解压窗口上限 2^23，超限拒绝。
+- 新增共享解压器 `ZstdStreamDecoder`（zstd-jni `1.5.7-16` 连续模式）：置于主包以便 WS 门与 QUIC
+  适配核共享同一类身份；非阻塞排干语义适配 WS 读线程与 QUIC netty IO 线程。zstd-jni 以未重定位
+  嵌套 jar 随四份构建分发（vanilla 未捆绑 zstd，无冲突；Minecraft 1.20.5+ 区块压缩用的是
+  lz4-java）。
+- Mod 版本升级为 `v0.10.0-alpha.2`；网络协议仍为 `0.8.0`（压缩套经门原生载体协商，envelope
+  结构无变化）。
+
 ## v0.10.0-alpha.1-proto0.8.0 - 2026-09-08
 
 - 新增裸 QUIC 传输门（客户端侧，实验性）：服务器地址以 `quic://host:port` 填写即走 QUIC 门，其余

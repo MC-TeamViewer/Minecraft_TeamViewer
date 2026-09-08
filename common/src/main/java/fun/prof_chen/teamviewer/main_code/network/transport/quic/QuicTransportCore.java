@@ -4,6 +4,7 @@ import fun.prof_chen.teamviewer.main_code.network.abstraction.SocketProcess;
 import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportListener;
 import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportOptions;
 import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportTrafficEvent;
+import fun.prof_chen.teamviewer.main_code.network.transport.ZstdStreamDecoder;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -50,11 +51,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * <p>门会话约定(与 WT 门同构,见 TeamViewRelay-Protocol README "传输门约定"):
  * 客户端开 1 条双向流只写(上行),服务端开 1 条单向流只读(下行),可靠流走
- * {@code [varint][payload]} 分帧,10 秒内首帧必须是合法握手。ALPN
- * {@code teamviewrelay/v1}。系统代理对 QUIC 无语义,忽略。</p>
+ * {@code [varint][payload]} 分帧,10 秒内首帧必须是合法握手。压缩套经 ALPN
+ * 协商(偏好序 {@code teamviewrelay/v1+zstd} 优先):+zstd 套下行帧载荷是
+ * 连续 zstd 流的压缩块(解压后即 envelope,上行仍 plain);mod 门不提供
+ * zstd-dict——本门收不到 datagram(netty-quic 未开 datagram 选项),字典模式
+ * 无用武之地。系统代理对 QUIC 无语义,忽略。</p>
  */
 final class QuicTransportCore {
     static final String ALPN = "teamviewrelay/v1";
+    static final String ALPN_ZSTD = ALPN + "+zstd";
     private static final long CONNECT_TIMEOUT_SECONDS = 10L;
     private static final long IO_TIMEOUT_SECONDS = 5L;
     private static final int IDLE_TIMEOUT_MS = 30_000;
@@ -77,7 +82,7 @@ final class QuicTransportCore {
         InetSocketAddress serverAddress = parseServerAddress(uri);
         QuicSslContext sslContext = QuicSslContextBuilder.forClient()
                 .trustManager(options.allowInsecureTls() ? trustAllManager() : systemTrustManager())
-                .applicationProtocols(ALPN)
+                .applicationProtocols(ALPN_ZSTD, ALPN)
                 .build();
         Quic.ensureAvailability();
 
@@ -163,6 +168,7 @@ final class QuicTransportCore {
         private final ConcurrentLinkedQueue<byte[]> outboundBacklog = new ConcurrentLinkedQueue<>();
         private volatile QuicChannel quicChannel;
         private volatile QuicStreamChannel uplink;
+        private volatile ZstdStreamDecoder zstdDecoder;
 
         private QuicSession(TransportListener listener, DatagramChannel udpChannel) {
             this.listener = listener;
@@ -225,6 +231,31 @@ final class QuicTransportCore {
 
         private void installDownlinkPump(ChannelHandlerContext streamContext) {
             QuicFrameCodec.Reassembler reassembler = new QuicFrameCodec.Reassembler();
+            // ALPN 在 TLS 握手内已定(连接级),服务端下行流只会晚于握手打开,
+            // 此处读协商结果不存在竞态。
+            QuicChannel connection = (QuicChannel) streamContext.channel().parent();
+            String alpn = connection.sslEngine().getApplicationProtocol();
+            boolean zstdNegotiated = ALPN_ZSTD.equals(alpn == null ? "" : alpn);
+            long[] chunkWireBytes = new long[1];
+            ZstdStreamDecoder decoder = null;
+            if (zstdNegotiated) {
+                try {
+                    decoder = new ZstdStreamDecoder(decompressed -> {
+                        listener.onTrafficEvent(new TransportTrafficEvent(
+                                TransportTrafficEvent.Direction.INBOUND,
+                                TransportTrafficEvent.FrameKind.BINARY,
+                                decompressed.length,
+                                chunkWireBytes[0]));
+                        listener.onBinaryMessage(decompressed);
+                    });
+                } catch (IOException error) {
+                    fail("zstd decoder init failed: " + error, error);
+                    streamContext.close();
+                    return;
+                }
+                zstdDecoder = decoder;
+            }
+            final ZstdStreamDecoder downlinkDecoder = decoder;
             streamContext.pipeline().addLast(new ChannelInboundHandlerAdapter() {
                 @Override
                 public void channelRead(ChannelHandlerContext context, Object message) {
@@ -243,15 +274,23 @@ final class QuicTransportCore {
                         reassembler.feed(chunk, 0, chunk.length);
                         byte[] payload;
                         while ((payload = reassembler.tryTakeFrame()) != null) {
-                            listener.onTrafficEvent(new TransportTrafficEvent(
-                                    TransportTrafficEvent.Direction.INBOUND,
-                                    TransportTrafficEvent.FrameKind.BINARY,
-                                    payload.length,
-                                    payload.length));
-                            listener.onBinaryMessage(payload);
+                            if (downlinkDecoder != null) {
+                                // +zstd 套:帧载荷 = 连续 zstd 流的压缩块,
+                                // 解压产出即 envelope 本体,经 sink 交付;上行
+                                // 恒 plain 分帧(压缩套单向语义)。
+                                chunkWireBytes[0] = payload.length;
+                                downlinkDecoder.push(payload);
+                            } else {
+                                listener.onTrafficEvent(new TransportTrafficEvent(
+                                        TransportTrafficEvent.Direction.INBOUND,
+                                        TransportTrafficEvent.FrameKind.BINARY,
+                                        payload.length,
+                                        payload.length));
+                                listener.onBinaryMessage(payload);
+                            }
                         }
-                    } catch (RuntimeException error) {
-                        // 非法帧头属协议违规:显式断连,不得静默等待
+                    } catch (IOException | RuntimeException error) {
+                        // 非法帧头/解压失败均属协议违规:显式断连,不得静默等待
                         fail("downlink framing violation: " + error, error);
                     }
                 }
@@ -263,6 +302,14 @@ final class QuicTransportCore {
             });
             streamContext.channel().config().setAutoRead(true);
             ((QuicStreamChannel) streamContext.channel()).read();
+        }
+
+        private void closeDecoder() {
+            ZstdStreamDecoder current = zstdDecoder;
+            zstdDecoder = null;
+            if (current != null) {
+                current.close();
+            }
         }
 
         @Override
@@ -301,6 +348,7 @@ final class QuicTransportCore {
             if (!closed.compareAndSet(false, true)) {
                 return;
             }
+            closeDecoder();
             QuicChannel channel = quicChannel;
             if (channel != null) {
                 channel.close(true, statusCode, Unpooled.EMPTY_BUFFER);
@@ -311,6 +359,7 @@ final class QuicTransportCore {
             if (closed.getAndSet(true)) {
                 return;
             }
+            closeDecoder();
             listener.onClosed(statusCode, reason);
         }
 
@@ -318,6 +367,7 @@ final class QuicTransportCore {
             if (closed.getAndSet(true)) {
                 return;
             }
+            closeDecoder();
             try {
                 listener.onFailure(new IOException(message, error));
             } finally {

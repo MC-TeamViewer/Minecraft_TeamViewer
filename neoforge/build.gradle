@@ -142,6 +142,8 @@ dependencies {
     jarJar "org.jetbrains.kotlin:kotlin-stdlib:${project.kotlin_version}"
     jarJar "com.google.protobuf:protobuf-java:${project.protobuf_version}"
     jarJar "com.google.protobuf:protobuf-java-util:${project.protobuf_version}"
+    // 压缩套下行解压;vanilla 未捆绑 zstd,原样嵌套(与 Gson/Jackson 情形不同)
+    jarJar "com.github.luben:zstd-jni:${project.zstd_jni_version}"
     jarJar "org.luaj:luaj-jse:${project.luaj_version}"
 }
 
@@ -372,7 +374,8 @@ def verifyNeoForgeStandalone = tasks.register("verifyNeoForgeStandalone") {
             }
             def jarJarEntries = names.findAll { it.startsWith("META-INF/jarjar/") && it.endsWith(".jar") }
             ["okhttp-", "okio-jvm-",
-             "kotlin-stdlib-", "protobuf-java-", "protobuf-java-util-", "luaj-jse-"].each { prefix ->
+             "kotlin-stdlib-", "protobuf-java-", "protobuf-java-util-", "luaj-jse-",
+             "zstd-jni-"].each { prefix ->
                 def matches = jarJarEntries.findAll { name ->
                     def fileName = name.substring("META-INF/jarjar/".length())
                     if (prefix == "protobuf-java-") return fileName.startsWith(prefix) && !fileName.startsWith("protobuf-java-util-")
