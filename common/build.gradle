@@ -132,6 +132,10 @@ tasks.register("generateProtoJava") {
             commandLine("sed", "s/ExternalDatasetDescriptor descriptor =/ExternalDatasetDescriptor dataset_descriptor =/", rootProject.file("third_party/TeamViewRelay-Protocol/proto/teamviewer/v1/teamviewer.proto").absolutePath)
             standardOutput = transformedProto.newOutputStream()
         }
+        // door.proto(0.9.0-alpha.4 传输层门控协议)原样带入,一并生成
+        def doorProto = file("${temporaryDir}/teamviewer/door/v1/door.proto")
+        doorProto.parentFile.mkdirs()
+        doorProto.text = rootProject.file("third_party/TeamViewRelay-Protocol/proto/teamviewer/door/v1/door.proto").text
         execOperations.exec {
             commandLine(resolvedBufBinary, "generate", temporaryDir.absolutePath, "--template", bufTemplateFile.absolutePath, "-o", generatedProtoJavaDir.absolutePath)
         }

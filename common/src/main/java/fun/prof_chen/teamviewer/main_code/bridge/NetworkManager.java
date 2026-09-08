@@ -313,6 +313,8 @@ public class NetworkManager {
 	
 	// 连接状态标志 - 表示当前是否与服务器保持连接
 	private volatile boolean isConnected = false;
+	/** 服务端在 HandshakeAck 中确认启用上行位置 datagram(alpha.5);未确认 = 全走可靠流。 */
+	private volatile boolean uplinkMovementDatagramAccepted = false;
 
 	// 底层 WebSocket 打开状态 - 区分“传输已建立”和“握手已完成”
 	private volatile boolean transportOpen = false;
@@ -823,11 +825,41 @@ public class NetworkManager {
 			}
 		}
 
+		boolean hadPendingPlayerRefresh = !pendingPlayerRefreshIds.isEmpty();
 		applyPendingPlayerRefresh(currentSnapshot, upsert, delete);
 
 		if (upsert.isEmpty() && delete.isEmpty()) {
 			sendObjectKeepaliveIfNeeded(submitPlayerId, currentSnapshot, null, upsert.keySet(), null, now);
 			return;
+		}
+
+		// 上行位置 datagram(alpha.5):服务端确认且无删除/定向补漏/强制全量时,
+		// 位置以**绝对值**整表上送(丢失自愈于下一 tick 的绝对值重发,无 diff 基线
+		// 问题);删除与校正数据必须走可靠流。sendDatagram 失败回落下方可靠路径。
+		boolean datagramUplink = uplinkMovementDatagramAccepted
+				&& socket != null
+				&& delete.isEmpty()
+				&& !hadPendingPlayerRefresh
+				&& !shouldForcePlayersFullRefresh();
+		if (datagramUplink) {
+			try {
+				long sentAt = now;
+				ProtocolPackets.PlayersPatchPacket packet = new ProtocolPackets.PlayersPatchPacket();
+				packet.submitPlayerId = UuidBinaryCodec.toBytes(submitPlayerId);
+				packet.upsert = currentSnapshot;
+				packet.delete = List.of();
+				byte[] payload = messageCodec.encode(packet);
+				if (socket.sendDatagram(payload)) {
+					lastSentPlayersSnapshot.clear();
+					lastSentPlayersSnapshot.putAll(currentSnapshot);
+					lastPlayersPacketSentMs = sentAt;
+					sendObjectKeepaliveIfNeeded(submitPlayerId, currentSnapshot, null, upsert.keySet(), null, sentAt);
+					return;
+				}
+				LOGGER.debug("Datagram uplink unavailable; falling back to reliable players_patch");
+			} catch (Exception e) {
+				LOGGER.warn("Datagram players_patch failed; falling back to reliable: {}", e.getMessage());
+			}
 		}
 
 		try {
@@ -2764,6 +2796,8 @@ public class NetworkManager {
 			handshake.preferredReportIntervalTicks = configGateway != null ? configGateway.getUpdateIntervalTicks() : 10;
 			handshake.minReportIntervalTicks = 1;
 			handshake.maxReportIntervalTicks = 1000;
+			handshake.declaresUplinkMovementDatagram =
+					socket != null && socket.supportsDatagram();
 			UUID localPlayerId = runtimeGateway.getLocalPlayerId();
 			if (localPlayerId != null) {
 				handshake.submitPlayerId = UuidBinaryCodec.toBytes(localPlayerId);
@@ -2812,6 +2846,11 @@ public class NetworkManager {
 
 		serverProtocolVersion = readProtocolVersionFromHandshakeAck(packet);
 		serverProgramVersion = readProgramVersionFromHandshakeAck(packet);
+		uplinkMovementDatagramAccepted =
+				socket != null && socket.supportsDatagram()
+						&& Boolean.TRUE.equals(packet.uplinkMovementDatagramAccepted);
+		LOGGER.info("Uplink movement datagram {}",
+				uplinkMovementDatagramAccepted ? "accepted by server" : "not accepted (reliable-only)");
 
 		if (!Boolean.TRUE.equals(packet.ready)) {
 			String rejectReason = extractHandshakeRejectReason(packet);

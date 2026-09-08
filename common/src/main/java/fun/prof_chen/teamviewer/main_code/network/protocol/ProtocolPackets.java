@@ -40,6 +40,8 @@ public final class ProtocolPackets {
 		public Integer battleChunkTimeoutSec;
 		public Map<String, Object> tabHistory;
 		public Map<String, Object> relationshipQuery;
+		/** 服务端确认启用的上行 datagram 通道(alpha.5);含 MOVEMENT = 位置可走 datagram。 */
+		public Boolean uplinkMovementDatagramAccepted;
 		public Map<String, Object> reportPolicy;
 	}
 
@@ -158,6 +160,8 @@ public final class ProtocolPackets {
 		public Integer preferredReportIntervalTicks;
 		public Integer minReportIntervalTicks;
 		public Integer maxReportIntervalTicks;
+		/** 传输具备 datagram 上行时置位:握手声明 unreliable_channels=[MOVEMENT]。 */
+		public boolean declaresUplinkMovementDatagram;
 	}
 
 	public static class PlayersPatchPacket {

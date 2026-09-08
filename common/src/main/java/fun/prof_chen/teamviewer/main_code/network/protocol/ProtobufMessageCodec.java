@@ -526,6 +526,8 @@ public final class ProtobufMessageCodec implements MessageCodec {
 		packet.relationshipQuery = message.hasRelationshipQuery()
 				? relationshipQueryCapabilitiesToMap(message.getRelationshipQuery()) : null;
 		packet.reportPolicy = message.hasReportPolicy() ? reportPolicyToMap(message.getReportPolicy()) : null;
+		packet.uplinkMovementDatagramAccepted = message.getUnreliableChannelsAcceptedList().stream()
+				.anyMatch(value -> value == UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT);
 		return packet;
 	}
 

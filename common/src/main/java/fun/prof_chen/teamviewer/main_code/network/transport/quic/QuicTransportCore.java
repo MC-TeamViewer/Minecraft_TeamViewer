@@ -13,6 +13,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
+import io.netty.util.ReferenceCountUtil;
 import io.netty.handler.codec.quic.QuicCongestionControlAlgorithm;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.nio.NioIoHandler;
@@ -54,15 +55,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 客户端开 1 条双向流只写(上行),服务端开 1 条单向流只读(下行),可靠流走
  * {@code [varint][payload]} 分帧,10 秒内首帧必须是合法握手。压缩套经 ALPN
  * 协商(偏好序 {@code teamviewrelay/v1+zstd} 优先):+zstd 套下行帧载荷是
- * 连续 zstd 流的压缩块(解压后即 envelope,上行仍 plain);mod 门不提供
- * zstd-dict——本门收不到 datagram(netty-quic 未开 datagram 选项),字典模式
- * 无用武之地。系统代理对 QUIC 无语义,忽略。</p>
+ * 连续 zstd 流的压缩块(解压后即 envelope,上行仍 plain)。datagram 选项已
+ * 开启(alpha.5 上行位置通道):位置 upsert 经裸 WireEnvelope datagram 上送,
+ * 尽力投递、恒 plain;+zstd-dict 仍不提供(字典是下行 movement 压缩,本门
+ * 无 datagram 消费方)。系统代理对 QUIC 无语义,忽略。</p>
  */
 final class QuicTransportCore {
     static final String ALPN = "teamviewrelay/v1";
     static final String ALPN_ZSTD = ALPN + "+zstd";
     private static final long CONNECT_TIMEOUT_SECONDS = 10L;
     private static final long IO_TIMEOUT_SECONDS = 5L;
+    private static final int DATAGRAM_QUEUE_LEN = 32;
     private static final int IDLE_TIMEOUT_MS = 30_000;
     private static final int IO_THREADS = 1;
 
@@ -96,6 +99,9 @@ final class QuicTransportCore {
                 .handler(new QuicClientCodecBuilder()
                         .sslContext(sslContext)
                         .maxIdleTimeout(IDLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        // datagram 上下行队列:上行位置通道(alpha.5)与未来
+                        // 下行不可靠载荷共用;收发均为尽力投递,不重传
+                        .datagram(DATAGRAM_QUEUE_LEN, DATAGRAM_QUEUE_LEN)
                         .congestionControlAlgorithm(QuicCongestionControlAlgorithm.BBR)
                         .initialMaxData(1 << 20)
                         .initialMaxStreamDataBidirectionalLocal(1 << 18)
@@ -179,6 +185,14 @@ final class QuicTransportCore {
 
         void start(InetSocketAddress serverAddress) {
             Future<QuicChannel> connectFuture = QuicChannel.newBootstrap(udpChannel)
+                    .handler(new ChannelInboundHandlerAdapter() {
+                        @Override
+                        public void channelRead(ChannelHandlerContext context, Object msg) {
+                            // 连接级收到的 datagram:Player 会话当前无下行
+                            // datagram 消费方,排空即可(尽力投递语义)
+                            ReferenceCountUtil.release(msg);
+                        }
+                    })
                     .streamHandler(new ChannelInboundHandlerAdapter() {
                         @Override
                         public void channelActive(ChannelHandlerContext context) {
@@ -315,6 +329,23 @@ final class QuicTransportCore {
         }
 
         @Override
+        public boolean supportsDatagram() {
+            return true;
+        }
+
+        @Override
+        public boolean sendDatagram(byte[] payload) {
+            QuicChannel channel = quicChannel;
+            if (closed.get() || payload.length == 0 || channel == null) {
+                return false;
+            }
+            // datagram 自带边界,裸 WireEnvelope 直发(无 varint 分帧、恒 plain);
+            // 与可靠流发送不同:入队即视为成功,后续写失败就是包丢失
+            // (尽力投递语义),不重试、不触发断连
+            channel.writeAndFlush(Unpooled.wrappedBuffer(payload));
+            return true;
+        }
+
         public void send(byte[] payload) {
             if (closed.get() || payload.length == 0) {
                 return;
