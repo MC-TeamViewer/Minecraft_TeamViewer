@@ -33,7 +33,7 @@ public final class MovementDatagramDecoder {
 
     /** 安装新字典:现任降级为 previous。内容非法或加载失败返回 false,
      * 现役字典保持不动(服务端收不到 ready 即维持独立压缩,自愈)。 */
-    boolean install(byte[] content) {
+    public boolean install(byte[] content) {
         if (content == null || content.length == 0 || content.length > MAX_DICT_CONTENT) {
             return false;
         }
@@ -55,12 +55,12 @@ public final class MovementDatagramDecoder {
     }
 
     /** +zstd 套:无字典独立单帧。 */
-    byte[] decodeZstd(byte[] data) {
+    public byte[] decodeZstd(byte[] data) {
         return tryFrameDecompress(data);
     }
 
     /** +zstd-dict 套:字典(current → previous)→ 无字典独立单帧。 */
-    byte[] decodeDict(byte[] data) {
+    public byte[] decodeDict(byte[] data) {
         synchronized (lock) {
             if (currentDict != null) {
                 byte[] out = tryCtxDecompress(currentDict, data);
@@ -78,7 +78,7 @@ public final class MovementDatagramDecoder {
         return tryFrameDecompress(data);
     }
 
-    void close() {
+    public void close() {
         synchronized (lock) {
             if (currentDict != null) {
                 currentDict.close();
