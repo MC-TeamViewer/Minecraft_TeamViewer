@@ -15,8 +15,13 @@ import java.util.Arrays;
  * <p>字典轮换宽限:current+previous 双字典与服务端重训生命周期对齐,每次
  * 安装现任降级为 previous、前任的前任释放。in-flight 的旧字典 datagram 在
  * 轮换后仍可解出;解压失败等价丢包,下个 dirty tick 全量重发自愈。</p>
+ *
+ * <p>必须 public:本类定义在主 jar(knot loader),而 QuicTransportCore 运行
+ * 在 QuicTransportProcess 的 child-first 隔离 loader 内,经父委派跨 loader
+ * 引用——包私有跨 loader 即 IllegalAccessError(同 ZstdStreamDecoder 的
+ * "共享同一类身份"先例,见 common/build.gradle quicCoreJar 注释)。</p>
  */
-final class MovementDatagramDecoder {
+public final class MovementDatagramDecoder {
     /** 字典内容防御上限,与后端 MAX_DICT_CONTENT 对齐。 */
     static final int MAX_DICT_CONTENT = 16 * 1024;
     /** 解压产物防御上限:datagram 上限约 1.2KB,64KB 已是数量级冗余。 */
