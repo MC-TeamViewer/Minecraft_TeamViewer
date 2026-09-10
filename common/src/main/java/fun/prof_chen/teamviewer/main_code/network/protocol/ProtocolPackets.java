@@ -42,6 +42,8 @@ public final class ProtocolPackets {
 		public Map<String, Object> relationshipQuery;
 		/** 服务端确认启用的上行 datagram 通道(alpha.5);含 MOVEMENT = 位置可走 datagram。 */
 		public Boolean uplinkMovementDatagramAccepted;
+		/** 服务端确认的下行消费通道(alpha.6 回执);含 MOVEMENT = 会下发 movement datagram。 */
+		public Boolean downlinkMovementDatagramAccepted;
 		public Map<String, Object> reportPolicy;
 	}
 
@@ -162,6 +164,8 @@ public final class ProtocolPackets {
 		public Integer maxReportIntervalTicks;
 		/** 传输具备 datagram 上行时置位:握手声明 unreliable_channels=[MOVEMENT]。 */
 		public boolean declaresUplinkMovementDatagram;
+		/** 传输具备 datagram 消费能力时置位:握手声明 accepts_channels=[MOVEMENT](alpha.6 下行声明)。 */
+		public boolean declaresDownlinkMovementDatagram;
 	}
 
 	public static class PlayersPatchPacket {

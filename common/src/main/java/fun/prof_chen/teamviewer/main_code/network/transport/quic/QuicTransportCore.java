@@ -4,6 +4,9 @@ import fun.prof_chen.teamviewer.main_code.network.abstraction.SocketProcess;
 import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportListener;
 import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportOptions;
 import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportTrafficEvent;
+import fun.prof_chen.teamviewer.main_code.network.proto.door.DatagramDictOffer;
+import fun.prof_chen.teamviewer.main_code.network.proto.door.DatagramDictReady;
+import fun.prof_chen.teamviewer.main_code.network.proto.door.DoorControlFrame;
 import fun.prof_chen.teamviewer.main_code.network.transport.ZstdStreamDecoder;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -54,15 +57,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>门会话约定(与 WT 门同构,见 TeamViewRelay-Protocol README "传输门约定"):
  * 客户端开 1 条双向流只写(上行),服务端开 1 条单向流只读(下行),可靠流走
  * {@code [varint][payload]} 分帧,10 秒内首帧必须是合法握手。压缩套经 ALPN
- * 协商(偏好序 {@code teamviewrelay/v1+zstd} 优先):+zstd 套下行帧载荷是
- * 连续 zstd 流的压缩块(解压后即 envelope,上行仍 plain)。datagram 选项已
- * 开启(alpha.5 上行位置通道):位置 upsert 经裸 WireEnvelope datagram 上送,
- * 尽力投递、恒 plain;+zstd-dict 仍不提供(字典是下行 movement 压缩,本门
- * 无 datagram 消费方)。系统代理对 QUIC 无语义,忽略。</p>
+ * 协商(偏好序 {@code teamviewrelay/v1+zstd-dict} 优先):+zstd* 套下行帧载荷
+ * 是连续 zstd 流的压缩块(解压后即 envelope,上行仍 plain)。datagram 选项
+ * 已开启:上行位置 upsert 经裸 WireEnvelope datagram 上送(恒 plain);下行
+ * movement datagram(alpha.10)仅 +zstd-dict 套消费,字典经门控流协商——
+ * 服务端第 2 条单向流承载 DictOffer,装字典后经客户端第 1 条单向流(全连接
+ * 唯一)回 DictReady,datagram 按「激活字典 → 前任字典 → 无字典单帧」解码,
+ * 失败按丢包静默丢弃。系统代理对 QUIC 无语义,忽略。</p>
  */
 final class QuicTransportCore {
     static final String ALPN = "teamviewrelay/v1";
     static final String ALPN_ZSTD = ALPN + "+zstd";
+    static final String ALPN_ZSTD_DICT = ALPN + "+zstd-dict";
     private static final long CONNECT_TIMEOUT_SECONDS = 10L;
     private static final long IO_TIMEOUT_SECONDS = 5L;
     private static final int DATAGRAM_QUEUE_LEN = 32;
@@ -86,7 +92,7 @@ final class QuicTransportCore {
         InetSocketAddress serverAddress = parseServerAddress(uri);
         QuicSslContext sslContext = QuicSslContextBuilder.forClient()
                 .trustManager(options.allowInsecureTls() ? trustAllManager() : systemTrustManager())
-                .applicationProtocols(ALPN_ZSTD, ALPN)
+                .applicationProtocols(ALPN_ZSTD_DICT, ALPN_ZSTD, ALPN)
                 .build();
         Quic.ensureAvailability();
 
@@ -99,8 +105,8 @@ final class QuicTransportCore {
                 .handler(new QuicClientCodecBuilder()
                         .sslContext(sslContext)
                         .maxIdleTimeout(IDLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                        // datagram 上下行队列:上行位置通道(alpha.5)与未来
-                        // 下行不可靠载荷共用;收发均为尽力投递,不重传
+                        // datagram 上下行队列:上行位置通道(alpha.5)与下行
+                        // movement datagram(alpha.10);收发均为尽力投递,不重传
                         .datagram(DATAGRAM_QUEUE_LEN, DATAGRAM_QUEUE_LEN)
                         .congestionControlAlgorithm(QuicCongestionControlAlgorithm.BBR)
                         .initialMaxData(1 << 20)
@@ -172,10 +178,17 @@ final class QuicTransportCore {
         private final DatagramChannel udpChannel;
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean downlinkInstalled = new AtomicBoolean();
+        /** 服务端第 2 条单向流 = 门控下行(+zstd-dict 套才消费)。 */
+        private final AtomicBoolean doorDownlinkInstalled = new AtomicBoolean();
+        /** 门控上行流已创建标志:全连接仅此一条,失败/写坏后不重开(重开即
+         * 第 2 条客户端单向流,违反门合同)。 */
+        private final AtomicBoolean doorUplinkCreated = new AtomicBoolean();
         private final CountDownLatch uplinkReady = new CountDownLatch(1);
         private final ConcurrentLinkedQueue<byte[]> outboundBacklog = new ConcurrentLinkedQueue<>();
+        private final MovementDatagramDecoder datagramDecoder = new MovementDatagramDecoder();
         private volatile QuicChannel quicChannel;
         private volatile QuicStreamChannel uplink;
+        private volatile QuicStreamChannel doorUplink;
         private volatile ZstdStreamDecoder zstdDecoder;
 
         private QuicSession(TransportListener listener, DatagramChannel udpChannel) {
@@ -188,24 +201,40 @@ final class QuicTransportCore {
                     .handler(new ChannelInboundHandlerAdapter() {
                         @Override
                         public void channelRead(ChannelHandlerContext context, Object msg) {
-                            // 连接级收到的 datagram:Player 会话当前无下行
-                            // datagram 消费方,排空即可(尽力投递语义)
-                            ReferenceCountUtil.release(msg);
+                            try {
+                                // 连接级 datagram(尽力投递):下行 movement
+                                // datagram(alpha.10)解码后上抛,解不开的
+                                // (含 bulk 心跳等非位置载荷)按丢包静默排空
+                                byte[] data = datagramBytes(msg);
+                                if (data != null && data.length > 0) {
+                                    byte[] envelope = decodeMovementDatagram(data);
+                                    if (envelope != null) {
+                                        listener.onMovementDatagram(envelope);
+                                    }
+                                }
+                            } finally {
+                                ReferenceCountUtil.release(msg);
+                            }
                         }
                     })
                     .streamHandler(new ChannelInboundHandlerAdapter() {
                         @Override
                         public void channelActive(ChannelHandlerContext context) {
                             QuicStreamChannel stream = (QuicStreamChannel) context.channel();
-                            boolean contractDownlink = stream.type() == QuicStreamType.UNIDIRECTIONAL
-                                    && !stream.isLocalCreated()
-                                    && downlinkInstalled.compareAndSet(false, true);
-                            if (contractDownlink) {
-                                installDownlinkPump(context);
-                            } else {
-                                // 合同外流:plain 版只有服务端一条下行单向流
-                                context.close();
+                            if (stream.type() == QuicStreamType.UNIDIRECTIONAL
+                                    && !stream.isLocalCreated()) {
+                                if (downlinkInstalled.compareAndSet(false, true)) {
+                                    installDownlinkPump(context);
+                                    return;
+                                }
+                                if (ALPN_ZSTD_DICT.equals(negotiatedAlpn())
+                                        && doorDownlinkInstalled.compareAndSet(false, true)) {
+                                    installDoorControlPump(context);
+                                    return;
+                                }
                             }
+                            // 合同外流(mod 未消费的 bulk 流等):一律关闭
+                            context.close();
                         }
                     })
                     .remoteAddress(serverAddress)
@@ -251,7 +280,9 @@ final class QuicTransportCore {
             // 此处读协商结果不存在竞态。
             QuicChannel connection = (QuicChannel) streamContext.channel().parent();
             String alpn = connection.sslEngine().getApplicationProtocol();
-            boolean zstdNegotiated = ALPN_ZSTD.equals(alpn == null ? "" : alpn);
+            // +zstd 与 +zstd-dict 套的可靠下行同为连续 zstd 流(字典只作用于
+            // datagram 单帧),两种套都要装流式解码器
+            boolean zstdNegotiated = ALPN_ZSTD.equals(alpn) || ALPN_ZSTD_DICT.equals(alpn);
             long[] chunkWireBytes = new long[1];
             ZstdStreamDecoder decoder = null;
             if (zstdNegotiated) {
@@ -326,6 +357,131 @@ final class QuicTransportCore {
             if (current != null) {
                 current.close();
             }
+            datagramDecoder.close();
+        }
+
+        /** 读取协商的 ALPN 套(连接建立前为空串)。 */
+        private String negotiatedAlpn() {
+            QuicChannel channel = quicChannel;
+            if (channel == null || channel.sslEngine() == null) {
+                return "";
+            }
+            String alpn = channel.sslEngine().getApplicationProtocol();
+            return alpn == null ? "" : alpn;
+        }
+
+        private static byte[] datagramBytes(Object msg) {
+            if (msg instanceof ByteBuf buffer) {
+                byte[] data = new byte[buffer.readableBytes()];
+                buffer.readBytes(data);
+                return data;
+            }
+            return null;
+        }
+
+        /** 下行 movement datagram 解码分派:plain 原样透传;+zstd* 走
+         * {@link MovementDatagramDecoder}(字典套含轮换宽限),失败返回 null
+         * 按丢包丢弃。 */
+        private byte[] decodeMovementDatagram(byte[] data) {
+            String alpn = negotiatedAlpn();
+            if (ALPN_ZSTD_DICT.equals(alpn)) {
+                return datagramDecoder.decodeDict(data);
+            }
+            if (ALPN_ZSTD.equals(alpn)) {
+                return datagramDecoder.decodeZstd(data);
+            }
+            return data;
+        }
+
+        /** 门控下行流(服务端第 2 条单向流,+zstd-dict 套独有消费)的泵:
+         * {@code [varint][DoorControlFrame]} 分帧,DictOffer → 装字典 →
+         * 回 DictReady。分帧/protobuf 解析失败均属协议违规(与下行应用流
+         * 同一纪律):显式断连,不得静默等待。 */
+        private void installDoorControlPump(ChannelHandlerContext streamContext) {
+            QuicFrameCodec.Reassembler reassembler = new QuicFrameCodec.Reassembler();
+            streamContext.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+                @Override
+                public void channelRead(ChannelHandlerContext context, Object message) {
+                    ByteBuf buffer;
+                    if (message instanceof QuicStreamFrame streamFrame) {
+                        buffer = streamFrame.content();
+                    } else if (message instanceof ByteBuf byteBuf) {
+                        buffer = byteBuf;
+                    } else {
+                        return;
+                    }
+                    byte[] chunk = new byte[buffer.readableBytes()];
+                    buffer.readBytes(chunk);
+                    buffer.release();
+                    try {
+                        reassembler.feed(chunk, 0, chunk.length);
+                        byte[] payload;
+                        while ((payload = reassembler.tryTakeFrame()) != null) {
+                            handleDoorFrame(payload);
+                        }
+                    } catch (IOException | RuntimeException error) {
+                        fail("door-control framing violation: " + error, error);
+                    }
+                }
+
+                @Override
+                public void exceptionCaught(ChannelHandlerContext context, Throwable error) {
+                    fail("door-control stream error: " + error, error);
+                }
+            });
+            streamContext.channel().config().setAutoRead(true);
+            ((QuicStreamChannel) streamContext.channel()).read();
+        }
+
+        /** 门控帧分发:仅消费 DictOffer(装字典 + 回执);无 payload 的合法
+         * protobuf 帧按应用层帧混入断连(与后端 door 流纪律一致);未知
+         * oneof 成员前向兼容忽略。字典内容异常(超限/加载失败)只拒装不回执
+         * ——服务端维持独立压缩,数据问题自愈而非断连。 */
+        private void handleDoorFrame(byte[] payload) throws IOException {
+            DoorControlFrame frame = DoorControlFrame.parseFrom(payload);
+            if (!frame.hasDictOffer()) {
+                if (frame.getPayloadCase() == DoorControlFrame.PayloadCase.PAYLOAD_NOT_SET) {
+                    throw new IOException("door frame without payload");
+                }
+                return;
+            }
+            DatagramDictOffer offer = frame.getDictOffer();
+            if (datagramDecoder.install(offer.getContent().toByteArray())) {
+                sendDictReady(offer.getDictionaryId());
+            }
+        }
+
+        /** 门控上行(客户端第 1 条单向流):全连接仅此一条,后续 ready 帧依次
+         * 写入同一条流(合同:第 2 条起客户端单向流一律违规断连)。开流失败
+         * 后不再重试——字典保持未确认,服务端 datagram 维持独立压缩,链路照常。 */
+        private void sendDictReady(String dictionaryId) {
+            byte[] framed = QuicFrameCodec.frame(DoorControlFrame.newBuilder()
+                    .setDictReady(DatagramDictReady.newBuilder()
+                            .setDictionaryId(dictionaryId)
+                            .build())
+                    .build()
+                    .toByteArray());
+            QuicStreamChannel stream = doorUplink;
+            if (stream != null && stream.isActive()) {
+                stream.writeAndFlush(Unpooled.wrappedBuffer(framed));
+                return;
+            }
+            if (!doorUplinkCreated.compareAndSet(false, true)) {
+                return;
+            }
+            QuicChannel channel = quicChannel;
+            if (channel == null) {
+                return;
+            }
+            channel.createStream(QuicStreamType.UNIDIRECTIONAL, new ChannelInboundHandlerAdapter())
+                    .addListener(future -> {
+                        if (future.isSuccess()) {
+                            QuicStreamChannel created = (QuicStreamChannel) future.getNow();
+                            doorUplink = created;
+                            created.writeAndFlush(Unpooled.wrappedBuffer(framed));
+                        }
+                        // 开流失败:doorUplinkCreated 已置位,不再重开,不写 ready
+                    });
         }
 
         @Override

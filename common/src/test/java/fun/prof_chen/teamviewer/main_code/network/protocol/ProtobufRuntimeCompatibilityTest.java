@@ -256,6 +256,39 @@ class ProtobufRuntimeCompatibilityTest {
     }
 
     @Test
+    void handshakeDeclaresDatagramChannelsAndParsesDownlinkAck() throws Exception {
+        ProtobufMessageCodec codec = new ProtobufMessageCodec();
+        ProtocolPackets.HandshakePacket handshake = new ProtocolPackets.HandshakePacket();
+        handshake.declaresUplinkMovementDatagram = true;
+        handshake.declaresDownlinkMovementDatagram = true;
+
+        WireEnvelope encoded = WireEnvelope.parseFrom(codec.encode(handshake));
+        var request = encoded.getPlayerHandshakeRequest();
+        assertEquals(List.of(fun.prof_chen.teamviewer.main_code.network.proto.UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT),
+                request.getUnreliableChannelsList());
+        assertEquals(List.of(fun.prof_chen.teamviewer.main_code.network.proto.UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT),
+                request.getAcceptsChannelsList());
+
+        // 未声明时两通道都不写(缺省字段不上线)
+        WireEnvelope bare = WireEnvelope.parseFrom(codec.encode(new ProtocolPackets.HandshakePacket()));
+        assertTrue(bare.getPlayerHandshakeRequest().getUnreliableChannelsList().isEmpty());
+        assertTrue(bare.getPlayerHandshakeRequest().getAcceptsChannelsList().isEmpty());
+
+        WireEnvelope ackEnvelope = WireEnvelope.newBuilder()
+                .setHandshakeAck(fun.prof_chen.teamviewer.main_code.network.proto.HandshakeAck.newBuilder()
+                        .setReady(true)
+                        .addUnreliableChannelsAccepted(
+                                fun.prof_chen.teamviewer.main_code.network.proto.UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT)
+                        .addDownlinkChannelsAccepted(
+                                fun.prof_chen.teamviewer.main_code.network.proto.UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT))
+                .build();
+        ProtocolPackets.HandshakeAckInboundPacket ack =
+                (ProtocolPackets.HandshakeAckInboundPacket) codec.decode(ackEnvelope.toByteArray()).packet;
+        assertEquals(Boolean.TRUE, ack.uplinkMovementDatagramAccepted);
+        assertEquals(Boolean.TRUE, ack.downlinkMovementDatagramAccepted);
+    }
+
+    @Test
     void typedEntityPatchWritesOnlyMaskedFields() throws Exception {
         UUID submit = UUID.randomUUID();
         UUID entity = UUID.randomUUID();

@@ -297,6 +297,12 @@ public final class ProtobufMessageCodec implements MessageCodec {
 		setOptionalInt(builder::setPreferredReportIntervalTicks, packet.preferredReportIntervalTicks);
 		setOptionalInt(builder::setMinReportIntervalTicks, packet.minReportIntervalTicks);
 		setOptionalInt(builder::setMaxReportIntervalTicks, packet.maxReportIntervalTicks);
+		if (packet.declaresUplinkMovementDatagram) {
+			builder.addUnreliableChannels(UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT);
+		}
+		if (packet.declaresDownlinkMovementDatagram) {
+			builder.addAcceptsChannels(UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT);
+		}
 		return builder.build();
 	}
 
@@ -527,6 +533,8 @@ public final class ProtobufMessageCodec implements MessageCodec {
 				? relationshipQueryCapabilitiesToMap(message.getRelationshipQuery()) : null;
 		packet.reportPolicy = message.hasReportPolicy() ? reportPolicyToMap(message.getReportPolicy()) : null;
 		packet.uplinkMovementDatagramAccepted = message.getUnreliableChannelsAcceptedList().stream()
+				.anyMatch(value -> value == UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT);
+		packet.downlinkMovementDatagramAccepted = message.getDownlinkChannelsAcceptedList().stream()
 				.anyMatch(value -> value == UnreliableChannel.UNRELIABLE_CHANNEL_MOVEMENT);
 		return packet;
 	}

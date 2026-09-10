@@ -315,6 +315,8 @@ public class NetworkManager {
 	private volatile boolean isConnected = false;
 	/** 服务端在 HandshakeAck 中确认启用上行位置 datagram(alpha.5);未确认 = 全走可靠流。 */
 	private volatile boolean uplinkMovementDatagramAccepted = false;
+	/** 服务端在 HandshakeAck 中确认下发 movement datagram(alpha.6 回执);未确认 = 不消费下行 datagram。 */
+	private volatile boolean downlinkMovementDatagramAccepted = false;
 
 	// 底层 WebSocket 打开状态 - 区分“传输已建立”和“握手已完成”
 	private volatile boolean transportOpen = false;
@@ -625,6 +627,11 @@ public class NetworkManager {
 				@Override
 				public void onBinaryMessage(byte[] payload) {
 					handleTransportBinaryMessage(attemptId, payload);
+				}
+
+				@Override
+				public void onMovementDatagram(byte[] payload) {
+					handleMovementDatagram(attemptId, payload);
 				}
 
 				@Override
@@ -1376,6 +1383,43 @@ public class NetworkManager {
 				return;
 			}
 			processDecodedMessage(attemptId, decoded);
+		});
+	}
+
+	/**
+	 * 下行 movement datagram(alpha.10)入口:传输层完成解压(plain / zstd
+	 * 单帧 / 字典帧),此处拿到裸 WireEnvelope 字节。合同恒为
+	 * {@code WireEnvelope{WebMap, Patch}},消费端按载荷类型识别、与连接角色
+	 * 无关;仅处理 patch,其余载荷与其他异常一律按尽力投递的丢包静默丢弃,
+	 * 不断连(可靠流低频保底兜住位置)。未确认下行(回执缺失/握手未完成)
+	 * 时同样丢弃。
+	 */
+	private void handleMovementDatagram(long attemptId, byte[] payload) {
+		if (!isCurrentConnectionAttempt(attemptId)) {
+			return;
+		}
+		if (payload == null || payload.length == 0) {
+			return;
+		}
+		if (!downlinkMovementDatagramAccepted || !handshakeCompleted) {
+			return;
+		}
+		ProtocolPackets.DecodedInboundMessage decoded;
+		try {
+			decoded = messageCodec.decode(payload);
+			if (decoded == null || !"patch".equals(decoded.type)) {
+				return;
+			}
+		} catch (Exception e) {
+			LOGGER.debug("Dropping undecodable movement datagram ({} bytes): {}",
+					payload.length, e.getMessage());
+			return;
+		}
+		enqueueMainThreadTask(() -> {
+			if (!isCurrentConnectionAttempt(attemptId)) {
+				return;
+			}
+			applyPatch((ProtocolPackets.PatchInboundPacket) decoded.packet);
 		});
 	}
 
@@ -2411,6 +2455,8 @@ public class NetworkManager {
 		}
 		handshakeSent = false;
 		handshakeCompleted = false;
+		uplinkMovementDatagramAccepted = false;
+		downlinkMovementDatagramAccepted = false;
 		connectionStage = ConnectionStage.CONNECTING;
 		transportOpen = false;
 		isConnected = false;
@@ -2798,6 +2844,8 @@ public class NetworkManager {
 			handshake.maxReportIntervalTicks = 1000;
 			handshake.declaresUplinkMovementDatagram =
 					socket != null && socket.supportsDatagram();
+			handshake.declaresDownlinkMovementDatagram =
+					socket != null && socket.supportsDatagram();
 			UUID localPlayerId = runtimeGateway.getLocalPlayerId();
 			if (localPlayerId != null) {
 				handshake.submitPlayerId = UuidBinaryCodec.toBytes(localPlayerId);
@@ -2851,6 +2899,11 @@ public class NetworkManager {
 						&& Boolean.TRUE.equals(packet.uplinkMovementDatagramAccepted);
 		LOGGER.info("Uplink movement datagram {}",
 				uplinkMovementDatagramAccepted ? "accepted by server" : "not accepted (reliable-only)");
+		downlinkMovementDatagramAccepted =
+				socket != null && socket.supportsDatagram()
+						&& Boolean.TRUE.equals(packet.downlinkMovementDatagramAccepted);
+		LOGGER.info("Downlink movement datagram {}",
+				downlinkMovementDatagramAccepted ? "accepted by server" : "not accepted (reliable-only)");
 
 		if (!Boolean.TRUE.equals(packet.ready)) {
 			String rejectReason = extractHandshakeRejectReason(packet);

@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.10.0-alpha.5-proto0.9.0 - 2026-09-10
+
+- QUIC 门接入下行 movement datagram 与 zstd 字典套(协议 `0.9.0-alpha.6`,后端需 `1.2.0-alpha.10` 及以上):
+  - ALPN 偏好序改为 `[teamviewrelay/v1+zstd-dict, teamviewrelay/v1+zstd, teamviewrelay/v1]`;
+    协商 +zstd-dict 时服务端经门控下行流(服务端第 2 条单向流)下发
+    `DatagramDictOffer`,装字典后经客户端第 1 条单向流(全连接仅此一条,后续
+    ready 帧依次写入同一流)回 `DatagramDictReady`。门控流分帧/protobuf 解析
+    失败按协议违规显式断连;字典内容异常只拒装不回执(服务端维持独立压缩,自愈)。
+  - 连接级 datagram 由排空改为消费:按「激活字典 → 前任字典(current+previous
+    双字典轮换宽限)→ 无字典独立单帧」顺序解码,全部失败按丢包静默丢弃。解出
+    的裸 `WireEnvelope` 恒为 `{WebMap, Patch}`(消费端按载荷类型识别、与连接
+    角色无关),`Patch.players` 绝对值 upsert 复用现有 patch 应用路径合并本地
+    玩家表。仅在握手回执 `downlink_channels_accepted` 含 MOVEMENT(alpha.6
+    字段 20)后生效;可靠流低频保底不变。
+  - 握手声明补全:Player 握手现在真正写入 `unreliable_channels`(alpha.5 字段
+    13,此前 `declaresUplinkMovementDatagram` 仅置位未编码,上行声明实际从未
+    上线),并新增 `accepts_channels`(字段 14)下行消费声明。
+  - 新增 `MovementDatagramDecoder`(zstd-jni,字典训练/压缩侧仅测试使用)。
+- Mod 版本升级为 `v0.10.0-alpha.5`;网络协议仍为 `0.9.0`(字段纯增量)。
+
 ## v0.10.0-alpha.2-proto0.8.0 - 2026-09-08
 
 - 两扇门接入压缩套下行 zstd（`enableCompression` 生效，协议需后端 `1.2.0-alpha.6` 及以上）：
