@@ -193,6 +193,13 @@ final class QuicTransportCore {
         private volatile QuicStreamChannel uplink;
         private volatile QuicStreamChannel doorUplink;
         private volatile ZstdStreamDecoder zstdDecoder;
+        private volatile long stateStreamId = -1;
+        private volatile long doorStreamId = -1;
+        private volatile QuicFrameCodec.Reassembler stateReassembler;
+        private volatile QuicFrameCodec.Reassembler doorReassembler;
+        private final long[] chunkWireBytes = new long[1];
+        private final java.util.concurrent.atomic.AtomicBoolean firstBytesLogged =
+                new java.util.concurrent.atomic.AtomicBoolean();
 
         private QuicSession(TransportListener listener, DatagramChannel udpChannel) {
             this.listener = listener;
@@ -204,6 +211,12 @@ final class QuicTransportCore {
                     .handler(new ChannelInboundHandlerAdapter() {
                         @Override
                         public void channelRead(ChannelHandlerContext context, Object msg) {
+                            if (msg instanceof QuicStreamChannel) {
+                                // 远端流通道必须继续向后传:QuicChannel pipeline
+                                // 尾部会 setupChannel(挂 streamHandler)+注册 child
+                                context.fireChannelRead(msg);
+                                return;
+                            }
                             try {
                                 // 连接级 datagram(尽力投递):下行 movement
                                 // datagram(alpha.10)解码后上抛,解不开的
@@ -223,21 +236,8 @@ final class QuicTransportCore {
                     .streamHandler(new ChannelInboundHandlerAdapter() {
                         @Override
                         public void channelActive(ChannelHandlerContext context) {
-                            QuicStreamChannel stream = (QuicStreamChannel) context.channel();
-                            if (stream.type() == QuicStreamType.UNIDIRECTIONAL
-                                    && !stream.isLocalCreated()) {
-                                if (downlinkInstalled.compareAndSet(false, true)) {
-                                    installDownlinkPump(context);
-                                    return;
-                                }
-                                if (ALPN_ZSTD_DICT.equals(negotiatedAlpn())
-                                        && doorDownlinkInstalled.compareAndSet(false, true)) {
-                                    installDoorControlPump(context);
-                                    return;
-                                }
-                            }
-                            // 合同外流(mod 未消费的 bulk 流等):一律关闭
-                            context.close();
+                            // netty-quic 约定:child 注册后必须显式 read(),否则数据不传播
+                            dispatchAcceptedStream(context);
                         }
                     })
                     .remoteAddress(serverAddress)
@@ -279,14 +279,31 @@ final class QuicTransportCore {
             listener.onOpen(alpn == null ? "" : alpn);
         }
 
-        private void installDownlinkPump(ChannelHandlerContext streamContext) {
+        /** 远端流的分发:第一条服务端单向流 = 应用下行,第二条(+zstd-dict) =
+         * 门控下行,其余一律关闭。netty-quic 实证:同时设置 handler 与
+         * streamHandler 时,streamHandler 不会挂到 child pipeline,远端流以
+         * QuicStreamChannel 消息形式送达连接级 handler——分发必须在此进行。 */
+        private void dispatchAcceptedStream(ChannelHandlerContext context) {
+            QuicStreamChannel stream = (QuicStreamChannel) context.channel();
+            boolean remoteUni = stream.type() == QuicStreamType.UNIDIRECTIONAL
+                    && !stream.isLocalCreated();
+            if (remoteUni && downlinkInstalled.compareAndSet(false, true)) {
+                installDownlinkPump(context);
+                return;
+            }
+            if (remoteUni && ALPN_ZSTD_DICT.equals(negotiatedAlpn())
+                    && doorDownlinkInstalled.compareAndSet(false, true)) {
+                installDoorControlPump(context);
+                return;
+            }
+            // 合同外流(mod 未消费的 bulk 流等):一律关闭
+            context.close();
+        }
+
+        /** 应用下行泵:挂 child pipeline,[varint] 分帧,zstd 套解连续流。 */
+        private void installDownlinkPump(ChannelHandlerContext context) {
             QuicFrameCodec.Reassembler reassembler = new QuicFrameCodec.Reassembler();
-            // ALPN 在 TLS 握手内已定(连接级),服务端下行流只会晚于握手打开,
-            // 此处读协商结果不存在竞态。
-            QuicChannel connection = (QuicChannel) streamContext.channel().parent();
-            String alpn = connection.sslEngine().getApplicationProtocol();
-            // +zstd 与 +zstd-dict 套的可靠下行同为连续 zstd 流(字典只作用于
-            // datagram 单帧),两种套都要装流式解码器
+            String alpn = negotiatedAlpn();
             boolean zstdNegotiated = ALPN_ZSTD.equals(alpn) || ALPN_ZSTD_DICT.equals(alpn);
             long[] chunkWireBytes = new long[1];
             ZstdStreamDecoder decoder = null;
@@ -302,7 +319,7 @@ final class QuicTransportCore {
                     });
                 } catch (IOException error) {
                     fail("zstd decoder init failed: " + error, error);
-                    streamContext.close();
+                    context.close();
                     return;
                 }
                 zstdDecoder = decoder;
@@ -312,7 +329,7 @@ final class QuicTransportCore {
                     alpn, decoder != null ? "installed" : "none(plain)");
             final java.util.concurrent.atomic.AtomicBoolean firstBytesLogged =
                     new java.util.concurrent.atomic.AtomicBoolean();
-            streamContext.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+            context.pipeline().addLast(new ChannelInboundHandlerAdapter() {
                 @Override
                 public void channelRead(ChannelHandlerContext context, Object message) {
                     ByteBuf buffer;
@@ -334,9 +351,6 @@ final class QuicTransportCore {
                         byte[] payload;
                         while ((payload = reassembler.tryTakeFrame()) != null) {
                             if (downlinkDecoder != null) {
-                                // +zstd 套:帧载荷 = 连续 zstd 流的压缩块,
-                                // 解压产出即 envelope 本体,经 sink 交付;上行
-                                // 恒 plain 分帧(压缩套单向语义)。
                                 chunkWireBytes[0] = payload.length;
                                 downlinkDecoder.push(payload);
                             } else {
@@ -349,7 +363,6 @@ final class QuicTransportCore {
                             }
                         }
                     } catch (IOException | RuntimeException error) {
-                        // 非法帧头/解压失败均属协议违规:显式断连,不得静默等待
                         fail("downlink framing violation: " + error, error);
                     }
                 }
@@ -359,8 +372,45 @@ final class QuicTransportCore {
                     fail("downlink stream error: " + error, error);
                 }
             });
+            context.channel().config().setAutoRead(true);
+            context.channel().read();
+        }
+
+        /** 门控下行泵:挂 child pipeline,[varint][DoorControlFrame] 分帧。 */
+        private void installDoorControlPump(ChannelHandlerContext streamContext) {
+            QuicFrameCodec.Reassembler reassembler = new QuicFrameCodec.Reassembler();
+            streamContext.pipeline().addLast(new ChannelInboundHandlerAdapter() {
+                @Override
+                public void channelRead(ChannelHandlerContext context, Object message) {
+                    ByteBuf buffer;
+                    if (message instanceof QuicStreamFrame streamFrame) {
+                        buffer = streamFrame.content();
+                    } else if (message instanceof ByteBuf byteBuf) {
+                        buffer = byteBuf;
+                    } else {
+                        return;
+                    }
+                    byte[] chunk = new byte[buffer.readableBytes()];
+                    buffer.readBytes(chunk);
+                    buffer.release();
+                    try {
+                        reassembler.feed(chunk, 0, chunk.length);
+                        byte[] payload;
+                        while ((payload = reassembler.tryTakeFrame()) != null) {
+                            handleDoorFrame(payload);
+                        }
+                    } catch (IOException | RuntimeException error) {
+                        fail("door-control framing violation: " + error, error);
+                    }
+                }
+
+                @Override
+                public void exceptionCaught(ChannelHandlerContext context, Throwable error) {
+                    fail("door-control stream error: " + error, error);
+                }
+            });
             streamContext.channel().config().setAutoRead(true);
-            ((QuicStreamChannel) streamContext.channel()).read();
+            streamContext.channel().read();
         }
 
         private void closeDecoder() {
@@ -409,46 +459,6 @@ final class QuicTransportCore {
          * {@code [varint][DoorControlFrame]} 分帧,DictOffer → 装字典 →
          * 回 DictReady。分帧/protobuf 解析失败均属协议违规(与下行应用流
          * 同一纪律):显式断连,不得静默等待。 */
-        private void installDoorControlPump(ChannelHandlerContext streamContext) {
-            QuicFrameCodec.Reassembler reassembler = new QuicFrameCodec.Reassembler();
-            streamContext.pipeline().addLast(new ChannelInboundHandlerAdapter() {
-                @Override
-                public void channelRead(ChannelHandlerContext context, Object message) {
-                    ByteBuf buffer;
-                    if (message instanceof QuicStreamFrame streamFrame) {
-                        buffer = streamFrame.content();
-                    } else if (message instanceof ByteBuf byteBuf) {
-                        buffer = byteBuf;
-                    } else {
-                        return;
-                    }
-                    byte[] chunk = new byte[buffer.readableBytes()];
-                    buffer.readBytes(chunk);
-                    buffer.release();
-                    try {
-                        reassembler.feed(chunk, 0, chunk.length);
-                        byte[] payload;
-                        while ((payload = reassembler.tryTakeFrame()) != null) {
-                            handleDoorFrame(payload);
-                        }
-                    } catch (IOException | RuntimeException error) {
-                        fail("door-control framing violation: " + error, error);
-                    }
-                }
-
-                @Override
-                public void exceptionCaught(ChannelHandlerContext context, Throwable error) {
-                    fail("door-control stream error: " + error, error);
-                }
-            });
-            streamContext.channel().config().setAutoRead(true);
-            ((QuicStreamChannel) streamContext.channel()).read();
-        }
-
-        /** 门控帧分发:仅消费 DictOffer(装字典 + 回执);无 payload 的合法
-         * protobuf 帧按应用层帧混入断连(与后端 door 流纪律一致);未知
-         * oneof 成员前向兼容忽略。字典内容异常(超限/加载失败)只拒装不回执
-         * ——服务端维持独立压缩,数据问题自愈而非断连。 */
         private void handleDoorFrame(byte[] payload) throws IOException {
             DoorControlFrame frame = DoorControlFrame.parseFrom(payload);
             if (!frame.hasDictOffer()) {

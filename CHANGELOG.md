@@ -2,9 +2,24 @@
 
 ## v0.10.0-alpha.6-proto0.9.0 - 2026-09-11
 
-- 诊断日志:QUIC 下行泵安装时打印读到的 ALPN 与是否安装 zstd 解码器;首字节到达
-  打印一条;连接建立打印本地地址(定位重叠连接/幽灵连接)。用于定位"业务握手中"
-  卡死(服务端 writer_ended、mod 收不到 ack)的确切环节。
+### 修复
+
+- QUIC 门远端流分发重构,修复"业务握手中"永久卡死:netty-quic 的
+  `QuicChannelBootstrap` 同时设置 `handler` 与 `streamHandler` 时,远端流以
+  `QuicStreamChannel` 消息形式送达连接级 handler(此前该 handler 把流对象当
+  datagram release 丢弃),`streamHandler.channelActive` 从不触发,下行泵从未
+  安装——服务端握手 ack 写出成功但客户端永远收不到,会话被服务端判
+  writer_ended 拆除,客户端无限重连。现按 netty-quic 官方约定实现:
+  连接级 handler 对流通道 `fireChannelRead` 透传(尾部的 setupChannel 挂载
+  streamHandler),`streamHandler.channelActive` 中显式 `ctx.read()` 并按流序
+  装配下行泵/门控泵。
+- `MovementDatagramDecoder` 类与成员全部 public(此前跨 child-first 加载器
+  访问包私有成员抛 IllegalAccessError,QUIC 门启动即失败)。
+
+### 诊断
+
+- QUIC 下行泵安装时打印读到的 ALPN 与是否安装 zstd 解码器;首字节到达打印
+  一条;连接建立打印本地地址(定位重叠连接/幽灵连接)。
 
 
 ## v0.10.0-alpha.5-proto0.9.0 - 2026-09-10
