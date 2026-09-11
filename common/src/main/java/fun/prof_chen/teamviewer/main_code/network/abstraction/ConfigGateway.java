@@ -38,4 +38,9 @@ public interface ConfigGateway {
     default boolean isWsPlainNoDeflate() {
         return false;
     }
+
+    /** 调试:收集并导出 QUIC TLS 解密密钥(SSLKEYLOGFILE 格式)。 */
+    default boolean isQuicTlsKeyLogEnabled() {
+        return false;
+    }
 }

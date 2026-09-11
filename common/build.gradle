@@ -41,6 +41,8 @@ dependencies {
     quicBundle "io.netty:netty-codec-native-quic:${project.netty_version}:windows-x86_64"
     testImplementation platform("org.junit:junit-bom:5.13.4")
     testImplementation "org.junit.jupiter:junit-jupiter"
+    // QuicTlsKeyLogWriter 测试要实现 BoringSSLKeylog 接口(compileOnly 不进测试类路径)
+    testImplementation "io.netty:netty-codec-classes-quic:${project.netty_version}"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
     testRuntimeOnly "org.slf4j:slf4j-simple:${project.slf4j_version}"
 }
@@ -156,6 +158,8 @@ def quicCoreJar = tasks.register("quicCoreJar", Jar) {
     include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicTransportCore\$*.class"
     include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicFrameCodec.class"
     include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicFrameCodec\$*.class"
+    include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicTlsKeyLogWriter.class"
+    include "fun/prof_chen/teamviewer/main_code/network/transport/quic/QuicTlsKeyLogWriter\$*.class"
 }
 
 processResources {

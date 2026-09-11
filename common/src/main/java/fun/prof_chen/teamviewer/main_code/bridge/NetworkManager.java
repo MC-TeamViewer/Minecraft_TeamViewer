@@ -601,6 +601,17 @@ public class NetworkManager {
 		doConnectAttempt();
 	}
 
+	/** 调试开关开启时解析 QUIC 密钥导出文件路径;关闭或网关缺失返回空串(= 不收集)。 */
+	private String resolveQuicKeyLogPath() {
+		if (!configGateway.isQuicTlsKeyLogEnabled() || runtimeGateway == null) {
+			return "";
+		}
+		return runtimeGateway.getLogsDirectory()
+				.resolve("teamviewer-network-dumps")
+				.resolve("teamviewer-quic-keys.log")
+				.toString();
+	}
+
 	private void doConnectAttempt() {
 		if (configGateway == null || transport == null) {
 			return;
@@ -611,10 +622,11 @@ public class NetworkManager {
 		boolean enableCompression = configGateway.isEnableCompression();
 		boolean allowInsecureTls = configGateway.isAllowInsecureTls();
 		String uri = configGateway.getServerURL();
+		String quicKeyLogPath = resolveQuicKeyLogPath();
 
 		try {
 			this.socket = transport.connect(uri, new TransportOptions(useSystemProxy, enableCompression, allowInsecureTls,
-					configGateway.getCompressionSuite(), configGateway.isWsPlainNoDeflate()), new TransportListener() {
+					configGateway.getCompressionSuite(), configGateway.isWsPlainNoDeflate(), quicKeyLogPath), new TransportListener() {
 				@Override
 				public void onOpen(String negotiatedExtensions) {
 					handleTransportOpen(attemptId, negotiatedExtensions);

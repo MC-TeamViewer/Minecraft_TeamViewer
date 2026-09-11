@@ -65,6 +65,7 @@ public class Config implements ConfigGateway {
     private boolean enableCompression = true;
     private String compressionSuite = TransportOptions.SUITE_ZSTD_DICT;
     private boolean wsPlainNoDeflate = false;
+    private boolean quicTlsKeyLogEnabled = false;
     private int updateInterval = 5;
     private boolean uploadEntities = true;
     private String entityReportMode = ENTITY_REPORT_AUTO;
@@ -355,6 +356,15 @@ public class Config implements ConfigGateway {
 
     public void setWsPlainNoDeflate(boolean wsPlainNoDeflate) {
         this.wsPlainNoDeflate = wsPlainNoDeflate;
+    }
+
+    @Override
+    public boolean isQuicTlsKeyLogEnabled() {
+        return quicTlsKeyLogEnabled;
+    }
+
+    public void setQuicTlsKeyLogEnabled(boolean quicTlsKeyLogEnabled) {
+        this.quicTlsKeyLogEnabled = quicTlsKeyLogEnabled;
     }
 
     public int getUpdateInterval() {

@@ -189,6 +189,7 @@ public record ConfigControlId(String value) {
     public static final ConfigControlId DEBUG_SETTINGS_HINT = fixed("DEBUG_SETTINGS_HINT");
     public static final ConfigControlId CYCLE_COMPRESSION_SUITE = fixed("CYCLE_COMPRESSION_SUITE");
     public static final ConfigControlId TOGGLE_WS_PLAIN_NO_DEFLATE = fixed("TOGGLE_WS_PLAIN_NO_DEFLATE");
+    public static final ConfigControlId TOGGLE_QUIC_TLS_KEY_LOG = fixed("TOGGLE_QUIC_TLS_KEY_LOG");
     public static final ConfigControlId PLUGIN_RESCAN = fixed("PLUGIN_RESCAN");
     public static final ConfigControlId PLUGIN_TAB_INSTALLED = fixed("PLUGIN_TAB_INSTALLED");
     public static final ConfigControlId PLUGIN_TAB_DISABLED = fixed("PLUGIN_TAB_DISABLED");

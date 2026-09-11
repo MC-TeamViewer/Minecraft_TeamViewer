@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.10.0-alpha.8-proto0.9.0 - 2026-09-12
+
+### 特性
+
+- 「调试设置」页新增「收集 QUIC 解密密钥（SSLKEYLOGFILE）」开关(默认关):
+  - 开启后新建的 QUIC 连接把 TLS 解密密钥按 SSLKEYLOGFILE 格式追加写入
+    `logs/teamviewer-network-dumps/teamviewer-quic-keys.log`,供
+    Wireshark / tshark(-o tls.keylog_file)解密对应时段的 UDP 抓包——
+    QUIC 1-RTT 载荷全程加密,没有密钥就只有包长可看;
+  - 只在开启时收集:关闭时完全不挂 BoringSSL keylog 回调,不产生任何
+    密钥材料;与压缩协议一样在下次连接时生效;
+  - 写失败(磁盘/权限)自动静默停用,不影响连接本身;同一路径跨连接追加。
+
 ## v0.10.0-alpha.7-proto0.9.0 - 2026-09-11
 
 ### 特性

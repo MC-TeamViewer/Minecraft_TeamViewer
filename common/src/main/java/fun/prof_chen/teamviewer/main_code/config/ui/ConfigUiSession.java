@@ -146,6 +146,7 @@ public final class ConfigUiSession implements ConfigUiController {
             case "OPEN_DEBUG_SETTINGS" -> ConfigUiAction.open(ConfigPageId.DEBUG_SETTINGS);
             case "CYCLE_COMPRESSION_SUITE" -> cycleCompressionSuite();
             case "TOGGLE_WS_PLAIN_NO_DEFLATE" -> toggleAndSave(config.isWsPlainNoDeflate(), config::setWsPlainNoDeflate);
+            case "TOGGLE_QUIC_TLS_KEY_LOG" -> toggleQuicTlsKeyLog();
             default -> ConfigUiAction.stay();
         };
     }
@@ -578,7 +579,7 @@ public final class ConfigUiSession implements ConfigUiController {
     }
 
     private ConfigPageView debugSettingsPage(int width, int height) {
-        int total = 18 + 28 * 4;
+        int total = 18 + 28 * 5;
         int start = (height - total) / 2;
         int x = (width - 240) / 2;
         List<ConfigControlView> c = new ArrayList<>();
@@ -596,6 +597,9 @@ public final class ConfigUiSession implements ConfigUiController {
         y += 28;
         c.add(toggleButton(TOGGLE_WS_PLAIN_NO_DEFLATE, x, y, 240,
                 "screen.mc_teamviewer.debug_settings.ws_plain_no_deflate", config.isWsPlainNoDeflate()));
+        y += 28;
+        c.add(toggleButton(TOGGLE_QUIC_TLS_KEY_LOG, x, y, 240,
+                "screen.mc_teamviewer.debug_settings.quic_tls_key_log", config.isQuicTlsKeyLogEnabled()));
         y += 28;
         c.add(button(BACK, x, y, 240, "screen.mc_teamviewer.config.back", null));
         return new ConfigPageView(ConfigPageId.DEBUG_SETTINGS, tr("screen.mc_teamviewer.debug_settings.title"), start - 24, c);
@@ -791,6 +795,16 @@ public final class ConfigUiSession implements ConfigUiController {
                 : TransportOptions.SUITE_ZSTD_DICT;
         config.setCompressionSuite(next);
         config.save();
+        return ConfigUiAction.stay();
+    }
+
+    private ConfigUiAction toggleQuicTlsKeyLog() {
+        boolean next = !config.isQuicTlsKeyLogEnabled();
+        config.setQuicTlsKeyLogEnabled(next);
+        config.save();
+        control.showActionBar(next
+                ? "§a[TV] 密钥导出已开启，下次连接生效：logs/teamviewer-network-dumps/teamviewer-quic-keys.log"
+                : "§c[TV] 密钥导出已关闭，下次连接生效");
         return ConfigUiAction.stay();
     }
 

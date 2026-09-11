@@ -327,6 +327,7 @@
   "screen.mc_teamviewer.debug_settings.title": "调试设置",
   "screen.mc_teamviewer.debug_settings.compression_suite": "压缩协议",
   "screen.mc_teamviewer.debug_settings.ws_plain_no_deflate": "Plain 模式下 WS 不使用 deflate",
+  "screen.mc_teamviewer.debug_settings.quic_tls_key_log": "收集 QUIC 解密密钥（SSLKEYLOGFILE）",
   "screen.mc_teamviewer.debug_settings.hint": "压缩协议变更将在下次连接时生效",
   "screen.mc_teamviewer.debug_settings.suite.plain": "plain",
   "screen.mc_teamviewer.debug_settings.suite.zstd": "zstd",

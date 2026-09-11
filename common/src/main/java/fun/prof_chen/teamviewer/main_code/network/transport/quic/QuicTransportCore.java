@@ -41,6 +41,7 @@ import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.file.Paths;
 import java.security.KeyStore;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
@@ -105,10 +106,16 @@ final class QuicTransportCore {
         } else {
             alpns = new String[] {ALPN_ZSTD_DICT, ALPN_ZSTD, ALPN};
         }
-        QuicSslContext sslContext = QuicSslContextBuilder.forClient()
+        QuicSslContextBuilder sslBuilder = QuicSslContextBuilder.forClient()
                 .trustManager(options.allowInsecureTls() ? trustAllManager() : systemTrustManager())
-                .applicationProtocols(alpns)
-                .build();
+                .applicationProtocols(alpns);
+        // 调试开关:导出 TLS 解密密钥(SSLKEYLOGFILE 格式,供 Wireshark 解密
+        // QUIC 抓包)。关闭时完全不挂回调,BoringSSL 不收集任何密钥材料;
+        // 与压缩套一样在下次连接时生效。
+        if (!options.quicKeyLogPath().isBlank()) {
+            sslBuilder.keylog(new QuicTlsKeyLogWriter(Paths.get(options.quicKeyLogPath())));
+        }
+        QuicSslContext sslContext = sslBuilder.build();
         Quic.ensureAvailability();
 
         Bootstrap udpBootstrap = new Bootstrap()

@@ -8,13 +8,16 @@ import java.util.Locale;
  * 明文直连(QUIC 仅提供基础 ALPN,WS 不提供子协议与 permessage-deflate)。
  * wsPlainNoDeflate 仅作用于 plain 套的 WS 门:连 permessage-deflate 也不
  * 协商,抓包/排障时得到纯明文流。
+ * quicKeyLogPath 非空时 QUIC 门把 TLS 解密密钥按 SSLKEYLOGFILE 格式追加
+ * 写入该路径(调试开关,只影响 QUIC;空串 = 完全不收集)。
  */
 public record TransportOptions(
         boolean useSystemProxy,
         boolean enableCompression,
         boolean allowInsecureTls,
         String compressionSuite,
-        boolean wsPlainNoDeflate
+        boolean wsPlainNoDeflate,
+        String quicKeyLogPath
 ) {
     public static final String SUITE_PLAIN = "plain";
     public static final String SUITE_ZSTD = "zstd";
