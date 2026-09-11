@@ -106,14 +106,18 @@ final class QuicTransportCore {
         } else {
             alpns = new String[] {ALPN_ZSTD_DICT, ALPN_ZSTD, ALPN};
         }
+        // 密钥导出为惰性写文件:bind 失败时 writer 尚未持有任何句柄
+        QuicTlsKeyLogWriter keyLogWriter = options.quicKeyLogPath().isBlank()
+                ? null
+                : new QuicTlsKeyLogWriter(Paths.get(options.quicKeyLogPath()));
         QuicSslContextBuilder sslBuilder = QuicSslContextBuilder.forClient()
                 .trustManager(options.allowInsecureTls() ? trustAllManager() : systemTrustManager())
                 .applicationProtocols(alpns);
         // 调试开关:导出 TLS 解密密钥(SSLKEYLOGFILE 格式,供 Wireshark 解密
         // QUIC 抓包)。关闭时完全不挂回调,BoringSSL 不收集任何密钥材料;
         // 与压缩套一样在下次连接时生效。
-        if (!options.quicKeyLogPath().isBlank()) {
-            sslBuilder.keylog(new QuicTlsKeyLogWriter(Paths.get(options.quicKeyLogPath())));
+        if (keyLogWriter != null) {
+            sslBuilder.keylog(keyLogWriter);
         }
         QuicSslContext sslContext = sslBuilder.build();
         Quic.ensureAvailability();
@@ -144,7 +148,7 @@ final class QuicTransportCore {
             throw new IOException("local UDP bind failed: " + bindFuture.cause());
         }
         DatagramChannel udpChannel = (DatagramChannel) bindFuture.channel();
-        QuicSession session = new QuicSession(listener, udpChannel);
+        QuicSession session = new QuicSession(listener, udpChannel, keyLogWriter);
         session.start(serverAddress);
         return session;
     }
@@ -198,6 +202,7 @@ final class QuicTransportCore {
     private static final class QuicSession implements SocketProcess {
         private final TransportListener listener;
         private final DatagramChannel udpChannel;
+        private final QuicTlsKeyLogWriter keyLogWriter;
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean downlinkInstalled = new AtomicBoolean();
         /** 服务端第 2 条单向流 = 门控下行(+zstd-dict 套才消费)。 */
@@ -220,9 +225,10 @@ final class QuicTransportCore {
         private final java.util.concurrent.atomic.AtomicBoolean firstBytesLogged =
                 new java.util.concurrent.atomic.AtomicBoolean();
 
-        private QuicSession(TransportListener listener, DatagramChannel udpChannel) {
+        private QuicSession(TransportListener listener, DatagramChannel udpChannel, QuicTlsKeyLogWriter keyLogWriter) {
             this.listener = listener;
             this.udpChannel = udpChannel;
+            this.keyLogWriter = keyLogWriter;
         }
 
         void start(InetSocketAddress serverAddress) {
@@ -579,9 +585,17 @@ final class QuicTransportCore {
                 return;
             }
             closeDecoder();
+            closeKeyLogWriter();
             QuicChannel channel = quicChannel;
             if (channel != null) {
-                channel.close(true, statusCode, Unpooled.EMPTY_BUFFER);
+                // 先发 CONNECTION_CLOSE,close 完成后再回收 parent UDP channel
+                channel.close(true, statusCode, Unpooled.EMPTY_BUFFER)
+                        .addListener(future -> closeUdpChannelQuietly());
+            } else {
+                // 握手尚未完成:没有可关的 QuicChannel,直接收掉 UDP socket
+                // 中止进行中的握手——否则 close-before-connected 会产出一条
+                // 完成握手后被静默弃置的孤儿连接(2026-09-12 抓包实证)
+                closeUdpChannelQuietly();
             }
         }
 
@@ -590,6 +604,8 @@ final class QuicTransportCore {
                 return;
             }
             closeDecoder();
+            closeKeyLogWriter();
+            closeUdpChannelQuietly();
             listener.onClosed(statusCode, reason);
         }
 
@@ -598,13 +614,33 @@ final class QuicTransportCore {
                 return;
             }
             closeDecoder();
+            closeKeyLogWriter();
             try {
                 listener.onFailure(new IOException(message, error));
             } finally {
                 QuicChannel channel = quicChannel;
                 if (channel != null) {
-                    channel.close(true, 0x1000, Unpooled.EMPTY_BUFFER);
+                    channel.close(true, 0x1000, Unpooled.EMPTY_BUFFER)
+                            .addListener(future -> closeUdpChannelQuietly());
+                } else {
+                    closeUdpChannelQuietly();
                 }
+            }
+        }
+
+        /** parent UDP channel 归用户管理,netty-quic 不会随 QuicChannel 回收;
+         * 所有终态都必须显式关掉,否则每条连接泄漏一个 socket。 */
+        private void closeUdpChannelQuietly() {
+            try {
+                udpChannel.close();
+            } catch (RuntimeException ignored) {
+                // 尽力回收:关闭失败无补救动作
+            }
+        }
+
+        private void closeKeyLogWriter() {
+            if (keyLogWriter != null) {
+                keyLogWriter.close();
             }
         }
     }

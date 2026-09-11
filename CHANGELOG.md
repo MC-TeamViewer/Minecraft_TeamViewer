@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.10.0-alpha.9-proto0.9.0 - 2026-09-12
+
+### 行为修正
+
+- 根页「连接」按钮在禁用态下不再触发两次连接:`setEnabled(true)` 内部已
+  发起连接,原先紧接着的 `reconnect()` 会立刻 disconnect+connect,握手中
+  的第一条连接被弃置成孤儿(2026-09-12 抓包实证:两条 Initial 相隔 ~2ms,
+  第一条存活 ~0.5s 后静默消失)。
+- QUIC 会话此前无法中止「握手中」的连接:`close()` 在 QuicChannel 尚未
+  建立时对线上零动作。现在三条终态路径(close/notifyClosed/fail)都会
+  收掉 parent UDP socket,中止进行中的握手并杜绝 socket 泄漏。
+- 发起新连接前显式终结仍存活的旧连接(此前直接覆盖引用即成孤儿);定时
+  重连到点执行时复查重连意愿,用户已断开就不再发起。
+- QUIC TLS 密钥导出文件句柄现在随会话终态回收(此前每条连接泄漏一个)。
+
+### 杂项
+
+- 调试设置页提示改为覆盖全页语义(「本页改动将在下次连接时生效」),压缩
+  协议按钮不再复用它作 tooltip;ClientControlGateway.disconnect() 去掉
+  与 setEnabled(false) 重复的断连调用。
+
 ## v0.10.0-alpha.8-proto0.9.0 - 2026-09-12
 
 ### 特性

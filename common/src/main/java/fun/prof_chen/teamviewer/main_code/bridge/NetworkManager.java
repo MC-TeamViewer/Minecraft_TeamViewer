@@ -616,6 +616,10 @@ public class NetworkManager {
 		if (configGateway == null || transport == null) {
 			return;
 		}
+		// 定时重连从调度到执行之间用户可能已 DISCONNECT:意愿取消就不再发起
+		if (!shouldReconnect) {
+			return;
+		}
 
 		final long attemptId = beginConnectionAttempt();
 		boolean useSystemProxy = configGateway.isUseSystemProxy();
@@ -623,6 +627,18 @@ public class NetworkManager {
 		boolean allowInsecureTls = configGateway.isAllowInsecureTls();
 		String uri = configGateway.getServerURL();
 		String quicKeyLogPath = resolveQuicKeyLogPath();
+
+		// 旧连接未终结就直接覆盖引用会把它变成孤儿(握手中的 QUIC 连接尤甚,
+		// close 之前 channel 尚为 null);attemptId 已更替,旧连接的迟到回调
+		// 会被作废,这里再显式终结之
+		if (this.socket != null) {
+			try {
+				this.socket.close(1000, "superseded");
+			} catch (RuntimeException ignored) {
+				// 尽力终结:旧连接回收失败不阻塞新连接
+			}
+			this.socket = null;
+		}
 
 		try {
 			this.socket = transport.connect(uri, new TransportOptions(useSystemProxy, enableCompression, allowInsecureTls,

@@ -60,6 +60,15 @@ final class QuicTlsKeyLogWriter implements BoringSSLKeylog {
         }
     }
 
+    /** 连接终态回收:由 QuicSession 在 close/notifyClosed/fail 时调用。
+     * 置 failed 防止终态后迟到的回调重新打开文件。 */
+    void close() {
+        synchronized (lock) {
+            failed = true;
+            closeQuietly();
+        }
+    }
+
     private void closeQuietly() {
         if (writer != null) {
             try {

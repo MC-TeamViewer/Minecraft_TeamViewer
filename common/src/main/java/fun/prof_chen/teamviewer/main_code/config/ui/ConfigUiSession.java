@@ -593,7 +593,7 @@ public final class ConfigUiSession implements ConfigUiController {
         c.add(ConfigControlView.button(CYCLE_COMPRESSION_SUITE, new UiRect(x, y, 240, HEIGHT),
                 UiText.translatable("screen.mc_teamviewer.config.value",
                         tr("screen.mc_teamviewer.debug_settings.compression_suite"), compressionSuiteLabel()),
-                tr("screen.mc_teamviewer.debug_settings.hint"), true));
+                null, true));
         y += 28;
         c.add(toggleButton(TOGGLE_WS_PLAIN_NO_DEFLATE, x, y, 240,
                 "screen.mc_teamviewer.debug_settings.ws_plain_no_deflate", config.isWsPlainNoDeflate()));
@@ -750,8 +750,10 @@ public final class ConfigUiSession implements ConfigUiController {
         if (control.isEnabled()) {
             control.reconnect();
         } else {
+            // setEnabled(true) 内部已触发 connect(ClientCoordinator);再调
+            // reconnect 会立刻 disconnect+connect,握手中的第一条连接关不掉
+            // 而变成孤儿(2026-09-12 抓包实证:两条 Initial 相隔 ~2ms)
             control.setEnabled(true);
-            control.reconnect();
         }
         return ConfigUiAction.stay();
     }

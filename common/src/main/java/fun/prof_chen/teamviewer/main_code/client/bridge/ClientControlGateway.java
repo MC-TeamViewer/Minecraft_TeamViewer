@@ -68,7 +68,7 @@ public interface ClientControlGateway {
     default boolean openIntegrationPluginDirectory(Path path) { return false; }
 
     default void disconnect() {
+        // setEnabled(false) 内部已调用 networkManager.disconnect(),无需重复
         setEnabled(false);
-        getNetworkManager().disconnect();
     }
 }

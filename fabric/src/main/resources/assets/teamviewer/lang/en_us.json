@@ -328,7 +328,7 @@
   "screen.mc_teamviewer.debug_settings.compression_suite": "Compression Suite",
   "screen.mc_teamviewer.debug_settings.ws_plain_no_deflate": "No permessage-deflate on WS in plain mode",
   "screen.mc_teamviewer.debug_settings.quic_tls_key_log": "Collect QUIC TLS decryption keys (SSLKEYLOGFILE)",
-  "screen.mc_teamviewer.debug_settings.hint": "Compression suite changes take effect on the next connection",
+  "screen.mc_teamviewer.debug_settings.hint": "Changes on this page take effect on the next connection",
   "screen.mc_teamviewer.debug_settings.suite.plain": "plain",
   "screen.mc_teamviewer.debug_settings.suite.zstd": "zstd",
   "screen.mc_teamviewer.debug_settings.suite.zstd_dict": "zstd-dict"
