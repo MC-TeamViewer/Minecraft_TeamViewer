@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.10.0-alpha.7-proto0.9.0 - 2026-09-11
+
+### 特性
+
+- 抓包纳入 datagram 流量,且只呈现应用层明文:上行位置 upsert(恒 plain,
+  sendDatagram 成功即记录)与下行 movement datagram(传输层解压后的裸
+  WireEnvelope,含握手完成前到达稍后被丢弃的包)均写入 pcapng。datagram 以
+  独立 UDP 包呈现(Ethernet + IPv4 proto 17 + UDP,校验和按伪头计算),与同
+  文件的 WS 帧共用合成 4 元组,直接可被 Wireshark 解析。
+- 「网络设置」页原「抓包调试」入口改为「调试设置」页,内含:
+  - 「抓包调试」:原抓包页入口(开始/停止/文件路径),保留 [RUN]/[IDLE] 状态;
+  - 「压缩协议」循环按钮:plain → zstd → zstd-dict(默认)→ plain;
+  - 「Plain 模式下 WS 不使用 deflate」开关。
+- 压缩协议套贯穿三层,变更在下次连接时生效:
+  - QUIC:ALPN 按套动态——plain 或总开关关闭只报 `teamviewrelay/v1`,zstd 报
+    `[+zstd, v1]`,zstd-dict 报 `[+zstd-dict, +zstd, v1]`;
+  - WS:zstd/zstd-dict 套 offer `[zstd, plain]` + permessage-deflate(WS 门无
+    datagram,字典套降级);plain 套只 offer `[plain]`,且按开关决定是否连
+    permessage-deflate 也不协商;总开关关闭则子协议与 deflate 皆无(纯明文)。
+
+### 行为修正
+
+- 压缩总开关此前对 QUIC 无效(恒报 zstd-dict 全列表),现尊重开关:关闭时
+  QUIC 以基础 ALPN 明文连接。
+
+### 诊断
+
+- 抓包页描述更新:导出内容为解码后的应用层流量(WebSocket 帧与 QUIC
+  datagram)。
+
+
 ## v0.10.0-alpha.6-proto0.9.0 - 2026-09-11
 
 ### 修复

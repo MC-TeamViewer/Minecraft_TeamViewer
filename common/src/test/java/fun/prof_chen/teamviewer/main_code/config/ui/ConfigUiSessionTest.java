@@ -64,7 +64,7 @@ class ConfigUiSessionTest {
                 "JourneyMap-owned settings must only be rendered by the plugin detail page");
         assertContains(session, ConfigPageId.NETWORK,
                 ConfigControlId.UPDATE_INTERVAL, ConfigControlId.UPLOAD_ENTITIES,
-                ConfigControlId.BATTLE_MAP_SOURCE, ConfigControlId.OPEN_PACKET_CAPTURE,
+                ConfigControlId.BATTLE_MAP_SOURCE, ConfigControlId.OPEN_DEBUG_SETTINGS,
                 ConfigControlId.OPEN_ENTITY_UPLOAD);
         assertContains(session, ConfigPageId.ENTITY_UPLOAD,
                 ConfigControlId.UPLOAD_ENTITIES, ConfigControlId.ENTITY_REPORT_MODE,
@@ -82,6 +82,9 @@ class ConfigUiSessionTest {
         assertContains(session, ConfigPageId.PACKET_CAPTURE,
                 ConfigControlId.PACKET_CAPTURE_START, ConfigControlId.PACKET_CAPTURE_STOP,
                 ConfigControlId.PACKET_CAPTURE_CURRENT_PATH, ConfigControlId.PACKET_CAPTURE_LAST_PATH);
+        assertContains(session, ConfigPageId.DEBUG_SETTINGS,
+                ConfigControlId.OPEN_PACKET_CAPTURE, ConfigControlId.CYCLE_COMPRESSION_SUITE,
+                ConfigControlId.TOGGLE_WS_PLAIN_NO_DEFLATE);
     }
 
     @Test

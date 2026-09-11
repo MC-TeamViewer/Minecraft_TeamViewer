@@ -59,7 +59,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>门会话约定(与 WT 门同构,见 TeamViewRelay-Protocol README "传输门约定"):
  * 客户端开 1 条双向流只写(上行),服务端开 1 条单向流只读(下行),可靠流走
  * {@code [varint][payload]} 分帧,10 秒内首帧必须是合法握手。压缩套经 ALPN
- * 协商(偏好序 {@code teamviewrelay/v1+zstd-dict} 优先):+zstd* 套下行帧载荷
+ * 协商(由配置的压缩套决定 offer 列表,默认 {@code teamviewrelay/v1+zstd-dict}
+ * 优先):+zstd* 套下行帧载荷
  * 是连续 zstd 流的压缩块(解压后即 envelope,上行仍 plain)。datagram 选项
  * 已开启:上行位置 upsert 经裸 WireEnvelope datagram 上送(恒 plain);下行
  * movement datagram(alpha.10)仅 +zstd-dict 套消费,字典经门控流协商——
@@ -93,9 +94,20 @@ final class QuicTransportCore {
     public static SocketProcess connect(String uri, TransportOptions options, TransportListener listener)
             throws Exception {
         InetSocketAddress serverAddress = parseServerAddress(uri);
+        // ALPN 即压缩套:总开关关闭或 plain 套只报基础协议;其余按偏好报
+        // 套内列表。服务端从客户端列表中择一,故列表即能力上界。
+        String suite = TransportOptions.normalizeSuite(options.compressionSuite());
+        String[] alpns;
+        if (!options.enableCompression() || TransportOptions.SUITE_PLAIN.equals(suite)) {
+            alpns = new String[] {ALPN};
+        } else if (TransportOptions.SUITE_ZSTD.equals(suite)) {
+            alpns = new String[] {ALPN_ZSTD, ALPN};
+        } else {
+            alpns = new String[] {ALPN_ZSTD_DICT, ALPN_ZSTD, ALPN};
+        }
         QuicSslContext sslContext = QuicSslContextBuilder.forClient()
                 .trustManager(options.allowInsecureTls() ? trustAllManager() : systemTrustManager())
-                .applicationProtocols(ALPN_ZSTD_DICT, ALPN_ZSTD, ALPN)
+                .applicationProtocols(alpns)
                 .build();
         Quic.ensureAvailability();
 

@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import fun.prof_chen.teamviewer.main_code.client.sdk.IntegrationIds;
 import fun.prof_chen.teamviewer.main_code.client.entity.EntityUploadFilter;
 import fun.prof_chen.teamviewer.main_code.network.abstraction.ConfigGateway;
+import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportOptions;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -62,6 +63,8 @@ public class Config implements ConfigGateway {
     private String tracerStartMode = TRACER_START_CROSSHAIR;
     private double tracerTopOffset = 0.42;
     private boolean enableCompression = true;
+    private String compressionSuite = TransportOptions.SUITE_ZSTD_DICT;
+    private boolean wsPlainNoDeflate = false;
     private int updateInterval = 5;
     private boolean uploadEntities = true;
     private String entityReportMode = ENTITY_REPORT_AUTO;
@@ -334,6 +337,24 @@ public class Config implements ConfigGateway {
 
     public void setEnableCompression(boolean enableCompression) {
         this.enableCompression = enableCompression;
+    }
+
+    @Override
+    public String getCompressionSuite() {
+        return TransportOptions.normalizeSuite(compressionSuite);
+    }
+
+    public void setCompressionSuite(String compressionSuite) {
+        this.compressionSuite = TransportOptions.normalizeSuite(compressionSuite);
+    }
+
+    @Override
+    public boolean isWsPlainNoDeflate() {
+        return wsPlainNoDeflate;
+    }
+
+    public void setWsPlainNoDeflate(boolean wsPlainNoDeflate) {
+        this.wsPlainNoDeflate = wsPlainNoDeflate;
     }
 
     public int getUpdateInterval() {

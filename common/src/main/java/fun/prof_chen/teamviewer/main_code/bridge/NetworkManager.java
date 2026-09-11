@@ -613,7 +613,8 @@ public class NetworkManager {
 		String uri = configGateway.getServerURL();
 
 		try {
-			this.socket = transport.connect(uri, new TransportOptions(useSystemProxy, enableCompression, allowInsecureTls), new TransportListener() {
+			this.socket = transport.connect(uri, new TransportOptions(useSystemProxy, enableCompression, allowInsecureTls,
+					configGateway.getCompressionSuite(), configGateway.isWsPlainNoDeflate()), new TransportListener() {
 				@Override
 				public void onOpen(String negotiatedExtensions) {
 					handleTransportOpen(attemptId, negotiatedExtensions);
@@ -857,6 +858,7 @@ public class NetworkManager {
 				packet.delete = List.of();
 				byte[] payload = messageCodec.encode(packet);
 				if (socket.sendDatagram(payload)) {
+					captureOutgoingDatagram(payload);
 					lastSentPlayersSnapshot.clear();
 					lastSentPlayersSnapshot.putAll(currentSnapshot);
 					lastPlayersPacketSentMs = sentAt;
@@ -1401,6 +1403,9 @@ public class NetworkManager {
 		if (payload == null || payload.length == 0) {
 			return;
 		}
+		// 载荷在传输层已解压为明文 envelope,抓原始应用层流量(含握手完成前
+		// 到达、稍后被丢弃的 datagram,便于排障)。
+		captureIncomingDatagram(payload);
 		if (!downlinkMovementDatagramAccepted || !handshakeCompleted) {
 			return;
 		}
@@ -2310,6 +2315,38 @@ public class NetworkManager {
 			writer.writeServerTextMessage(text);
 		} catch (Exception e) {
 			LOGGER.warn("Failed to dump incoming websocket text payload: {}", e.getMessage());
+			closePacketDumpWriterQuietly();
+		}
+	}
+
+	private void captureOutgoingDatagram(byte[] payload) {
+		if (payload == null || payload.length == 0) {
+			return;
+		}
+		WebSocketCaptureWriter writer = getPacketDumpWriterIfEnabled();
+		if (writer == null) {
+			return;
+		}
+		try {
+			writer.writeClientDatagramMessage(payload);
+		} catch (Exception e) {
+			LOGGER.warn("Failed to dump outgoing datagram payload: {}", e.getMessage());
+			closePacketDumpWriterQuietly();
+		}
+	}
+
+	private void captureIncomingDatagram(byte[] payload) {
+		if (payload == null || payload.length == 0) {
+			return;
+		}
+		WebSocketCaptureWriter writer = getPacketDumpWriterIfEnabled();
+		if (writer == null) {
+			return;
+		}
+		try {
+			writer.writeServerDatagramMessage(payload);
+		} catch (Exception e) {
+			LOGGER.warn("Failed to dump incoming datagram payload: {}", e.getMessage());
 			closePacketDumpWriterQuietly();
 		}
 	}

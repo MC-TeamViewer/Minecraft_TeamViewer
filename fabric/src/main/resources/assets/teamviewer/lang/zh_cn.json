@@ -9,7 +9,6 @@
   "key.category.team_view_relay.general": "TeamViewRelay",
   "hud.mc_teamviewer.traffic.up": "↑ 未压%s 压后%s Σ未压%s 压后%s",
   "hud.mc_teamviewer.traffic.down": "↓ 未压%s 压后%s Σ未压%s 压后%s",
-  
   "screen.mc_teamviewer.config.title": "TeamViewRelay 配置",
   "screen.mc_teamviewer.config.value": "%s：%s",
   "screen.mc_teamviewer.config.url": "服务器URL",
@@ -110,7 +109,6 @@
   "screen.mc_teamviewer.config.connection_failed_short": "连接失败（鼠标悬浮查看原因）",
   "screen.mc_teamviewer.config.save_required_hint": "服务器设置已更新，请点击保存以生效",
   "screen.mc_teamviewer.config.unknown_error": "未知错误",
-  
   "screen.mc_teamviewer.color_config.title": "颜色配置",
   "screen.mc_teamviewer.color_config.box_color": "方框颜色 (ARGB格式)",
   "screen.mc_teamviewer.color_config.line_color": "线条颜色 (ARGB格式)",
@@ -122,7 +120,7 @@
   "screen.mc_teamviewer.waypoint_shape_config.title": "标点形状配置",
   "screen.mc_teamviewer.network_config.title": "网络配置",
   "screen.mc_teamviewer.packet_capture.title": "抓包调试",
-  "screen.mc_teamviewer.packet_capture.description": "导出与服务器的原始 WebSocket 消息，供 Wireshark 分析",
+  "screen.mc_teamviewer.packet_capture.description": "导出与服务器的应用层流量（WebSocket 帧与 QUIC datagram，均为解码后的明文），供 Wireshark 分析",
   "screen.mc_teamviewer.packet_capture.start": "开始抓包",
   "screen.mc_teamviewer.packet_capture.stop": "结束抓包",
   "screen.mc_teamviewer.packet_capture.status_idle": "状态: 未抓包",
@@ -314,7 +312,6 @@
   "screen.mc_teamviewer.entity_upload.type_hint": "minecraft:zombie",
   "screen.mc_teamviewer.entity_upload.name_hint": "实体的精确自定义名称",
   "screen.mc_teamviewer.entity_upload.save_rule": "保存规则",
-  
   "screen.mc_teamviewer.config.show_last_seen_players": "显示离线玩家最后位置",
   "screen.mc_teamviewer.config.show_last_seen_players.tooltip": "默认关闭。启用后在世界渲染和已支持的小地图中显示权威外部源记录的最后位置与本地时间（网络数据仍使用 UTC 毫秒）。",
   "screen.mc_teamviewer.config.show_last_seen_boxes": "离线位置方框",
@@ -325,5 +322,13 @@
   "connection.status.connecting": "正在连接",
   "connection.status.failed": "连接失败",
   "connection.status.disconnected": "未连接",
-  "connection.status.connected_handshaking": "已连接，业务握手中"
+  "connection.status.connected_handshaking": "已连接，业务握手中",
+  "screen.mc_teamviewer.config.debug_settings": "调试设置",
+  "screen.mc_teamviewer.debug_settings.title": "调试设置",
+  "screen.mc_teamviewer.debug_settings.compression_suite": "压缩协议",
+  "screen.mc_teamviewer.debug_settings.ws_plain_no_deflate": "Plain 模式下 WS 不使用 deflate",
+  "screen.mc_teamviewer.debug_settings.hint": "压缩协议变更将在下次连接时生效",
+  "screen.mc_teamviewer.debug_settings.suite.plain": "plain",
+  "screen.mc_teamviewer.debug_settings.suite.zstd": "zstd",
+  "screen.mc_teamviewer.debug_settings.suite.zstd_dict": "zstd-dict"
 }

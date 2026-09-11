@@ -65,6 +65,25 @@ public final class OkHttpTransportProcess implements TransportProcess {
     private static final String SUBPROTOCOL_PLAIN = "teamviewrelay.plain.v1";
     private static final String OFFERED_SUBPROTOCOLS = SUBPROTOCOL_ZSTD + ", " + SUBPROTOCOL_PLAIN;
 
+    /**
+     * WS 门协商参数(压缩套 → 请求头的唯一映射,便于单测)。总开关关闭时
+     * 子协议与 deflate 皆不提供(纯明文);字典套在 WS 门降级为 zstd offer
+     * (WS 无 datagram,字典帧永远不会到达 mod);plain 套只提供 plain,
+     * 且可按 {@code wsPlainNoDeflate} 连 permessage-deflate 也不协商。
+     */
+    record WsNegotiation(boolean deflateOffered, String offeredSubprotocols) {
+        static WsNegotiation forSuite(boolean compressionEnabled, String suite, boolean wsPlainNoDeflate) {
+            if (!compressionEnabled) {
+                return new WsNegotiation(false, null);
+            }
+            String normalized = TransportOptions.normalizeSuite(suite);
+            if (TransportOptions.SUITE_PLAIN.equals(normalized)) {
+                return new WsNegotiation(!wsPlainNoDeflate, SUBPROTOCOL_PLAIN);
+            }
+            return new WsNegotiation(true, OFFERED_SUBPROTOCOLS);
+        }
+    }
+
     @Override
     public SocketProcess connect(String uri, TransportOptions options, TransportListener listener) {
         Objects.requireNonNull(options, "options");
@@ -84,10 +103,14 @@ public final class OkHttpTransportProcess implements TransportProcess {
             builder.hostnameVerifier((hostname, session) -> true);
         }
 
+        WsNegotiation negotiation = WsNegotiation.forSuite(
+                options.enableCompression(),
+                options.compressionSuite(),
+                options.wsPlainNoDeflate());
         InstrumentedWebSocketSession session = new InstrumentedWebSocketSession(
                 builder.build(),
                 uri,
-                options.enableCompression(),
+                negotiation,
                 listener
         );
         session.connect();
@@ -146,7 +169,7 @@ public final class OkHttpTransportProcess implements TransportProcess {
     private static final class InstrumentedWebSocketSession implements SocketProcess, TrackingWebSocketReader.FrameCallback {
         private final OkHttpClient client;
         private final String uri;
-        private final boolean compressionRequested;
+        private final WsNegotiation negotiation;
         private final TransportListener listener;
         private final ExecutorService writerExecutor = Executors.newSingleThreadExecutor(namedFactory("tv-ws-writer"));
         private final ScheduledExecutorService closeScheduler = Executors.newSingleThreadScheduledExecutor(namedFactory("tv-ws-close"));
@@ -171,12 +194,12 @@ public final class OkHttpTransportProcess implements TransportProcess {
         private InstrumentedWebSocketSession(
                 OkHttpClient client,
                 String uri,
-                boolean compressionRequested,
+                WsNegotiation negotiation,
                 TransportListener listener
         ) {
             this.client = client;
             this.uri = uri;
-            this.compressionRequested = compressionRequested;
+            this.negotiation = negotiation;
             this.listener = listener;
         }
 
@@ -188,12 +211,14 @@ public final class OkHttpTransportProcess implements TransportProcess {
                     .header("Sec-WebSocket-Version", "13");
             String webSocketKey = WebSocketProtocolUtil.randomWebSocketKey(random);
             requestBuilder.header("Sec-WebSocket-Key", webSocketKey);
-            if (compressionRequested) {
-                // 压缩套与 permessage-deflate 同头竞争,回退链:zstd → deflate
-                // →明文。新后端择 teamviewrelay 子协议并回执(不再回执扩展);
+            if (negotiation.deflateOffered()) {
+                // 压缩套决定 offer:子协议按套列表提供,deflate 仅在未关用时
+                // 携带。新后端择 teamviewrelay 子协议并回执(不再回执扩展);
                 // 旧后端忽略该头、照常回执 permessage-deflate,走原路径。
                 requestBuilder.header("Sec-WebSocket-Extensions", "permessage-deflate");
-                requestBuilder.header("Sec-WebSocket-Protocol", OFFERED_SUBPROTOCOLS);
+            }
+            if (negotiation.offeredSubprotocols() != null) {
+                requestBuilder.header("Sec-WebSocket-Protocol", negotiation.offeredSubprotocols());
             }
             Request request = requestBuilder.build();
 
@@ -222,7 +247,7 @@ public final class OkHttpTransportProcess implements TransportProcess {
                             throw new ProtocolException(
                                     "Server selected unexpected WebSocket subprotocol: " + selectedSubprotocol);
                         }
-                        WebSocketExtensionsInfo negotiated = WebSocketExtensionsInfo.parse(response, compressionRequested);
+                        WebSocketExtensionsInfo negotiated = WebSocketExtensionsInfo.parse(response, negotiation.deflateOffered());
                         if (zstdNegotiated && negotiated.perMessageDeflate()) {
                             throw new ProtocolException(
                                     "Server negotiated permessage-deflate together with the zstd subprotocol");

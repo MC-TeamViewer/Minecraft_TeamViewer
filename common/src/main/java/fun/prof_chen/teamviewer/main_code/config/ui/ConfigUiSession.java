@@ -7,6 +7,7 @@ import fun.prof_chen.teamviewer.main_code.client.sdk.IntegrationIds;
 import fun.prof_chen.teamviewer.main_code.client.sdk.IntegrationRole;
 import fun.prof_chen.teamviewer.main_code.client.sdk.IntegrationSupportStatus;
 import fun.prof_chen.teamviewer.main_code.config.Config;
+import fun.prof_chen.teamviewer.main_code.network.abstraction.TransportOptions;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -58,6 +59,7 @@ public final class ConfigUiSession implements ConfigUiController {
             case WAYPOINT -> waypointPage(width, height);
             case WAYPOINT_SHAPE -> waypointShapePage(width, height);
             case PACKET_CAPTURE -> packetCapturePage(width, height);
+            case DEBUG_SETTINGS -> debugSettingsPage(width, height);
         };
     }
 
@@ -141,6 +143,9 @@ public final class ConfigUiSession implements ConfigUiController {
             case "BATTLE_MAP_DEBUG" -> toggle(config.isBattleMapDebugEnabled(), config::setBattleMapDebugEnabled);
             case "PACKET_CAPTURE_START" -> startPacketCapture();
             case "PACKET_CAPTURE_STOP" -> stopPacketCapture();
+            case "OPEN_DEBUG_SETTINGS" -> ConfigUiAction.open(ConfigPageId.DEBUG_SETTINGS);
+            case "CYCLE_COMPRESSION_SUITE" -> cycleCompressionSuite();
+            case "TOGGLE_WS_PLAIN_NO_DEFLATE" -> toggleAndSave(config.isWsPlainNoDeflate(), config::setWsPlainNoDeflate);
             default -> ConfigUiAction.stay();
         };
     }
@@ -343,8 +348,8 @@ public final class ConfigUiSession implements ConfigUiController {
                 battleMapSourceTooltip(), true));
         y += 25;
         c.add(toggleButton(BATTLE_MAP_DEBUG, left, y, column, "screen.mc_teamviewer.config.battle_map_debug", config.isBattleMapDebugEnabled()));
-        c.add(ConfigControlView.button(OPEN_PACKET_CAPTURE, new UiRect(right, y, column, HEIGHT),
-                tr("screen.mc_teamviewer.config.packet_capture_page").append(
+        c.add(ConfigControlView.button(OPEN_DEBUG_SETTINGS, new UiRect(right, y, column, HEIGHT),
+                tr("screen.mc_teamviewer.config.debug_settings").append(
                         control.getNetworkManager().isPacketDumpCaptureActive() ? " [RUN]" : " [IDLE]"), null, true));
         y += 25;
         c.add(button(OPEN_ENTITY_UPLOAD, left, y, column * 2 + 8,
@@ -572,6 +577,38 @@ public final class ConfigUiSession implements ConfigUiController {
         return new ConfigPageView(ConfigPageId.PACKET_CAPTURE, tr("screen.mc_teamviewer.packet_capture.title"), start - 24, c);
     }
 
+    private ConfigPageView debugSettingsPage(int width, int height) {
+        int total = 18 + 28 * 4;
+        int start = (height - total) / 2;
+        int x = (width - 240) / 2;
+        List<ConfigControlView> c = new ArrayList<>();
+        c.add(ConfigControlView.text(DEBUG_SETTINGS_HINT, new UiRect(x, start, 240, 12),
+                tr("screen.mc_teamviewer.debug_settings.hint"), null, 0xE0E0E0, true, ConfigControlView.TextAlignment.CENTER));
+        int y = start + 18;
+        boolean captureActive = control.getNetworkManager().isPacketDumpCaptureActive();
+        c.add(ConfigControlView.button(OPEN_PACKET_CAPTURE, new UiRect(x, y, 240, HEIGHT),
+                tr("screen.mc_teamviewer.config.packet_capture_page").append(captureActive ? " [RUN]" : " [IDLE]"), null, true));
+        y += 28;
+        c.add(ConfigControlView.button(CYCLE_COMPRESSION_SUITE, new UiRect(x, y, 240, HEIGHT),
+                UiText.translatable("screen.mc_teamviewer.config.value",
+                        tr("screen.mc_teamviewer.debug_settings.compression_suite"), compressionSuiteLabel()),
+                tr("screen.mc_teamviewer.debug_settings.hint"), true));
+        y += 28;
+        c.add(toggleButton(TOGGLE_WS_PLAIN_NO_DEFLATE, x, y, 240,
+                "screen.mc_teamviewer.debug_settings.ws_plain_no_deflate", config.isWsPlainNoDeflate()));
+        y += 28;
+        c.add(button(BACK, x, y, 240, "screen.mc_teamviewer.config.back", null));
+        return new ConfigPageView(ConfigPageId.DEBUG_SETTINGS, tr("screen.mc_teamviewer.debug_settings.title"), start - 24, c);
+    }
+
+    private UiText compressionSuiteLabel() {
+        return switch (config.getCompressionSuite()) {
+            case TransportOptions.SUITE_PLAIN -> tr("screen.mc_teamviewer.debug_settings.suite.plain");
+            case TransportOptions.SUITE_ZSTD -> tr("screen.mc_teamviewer.debug_settings.suite.zstd");
+            default -> tr("screen.mc_teamviewer.debug_settings.suite.zstd_dict");
+        };
+    }
+
     private void applyPageFields(ConfigPageId page) {
         switch (page) {
             case DISPLAY -> applyDisplayFields();
@@ -744,6 +781,16 @@ public final class ConfigUiSession implements ConfigUiController {
         String current = config.getBattleMapSourceId();
         int index = sourceIds.indexOf(current);
         config.setBattleMapSourceId(sourceIds.get((index + 1 + sourceIds.size()) % sourceIds.size()));
+        return ConfigUiAction.stay();
+    }
+
+    private ConfigUiAction cycleCompressionSuite() {
+        String current = config.getCompressionSuite();
+        String next = TransportOptions.SUITE_ZSTD_DICT.equals(current) ? TransportOptions.SUITE_PLAIN
+                : TransportOptions.SUITE_PLAIN.equals(current) ? TransportOptions.SUITE_ZSTD
+                : TransportOptions.SUITE_ZSTD_DICT;
+        config.setCompressionSuite(next);
+        config.save();
         return ConfigUiAction.stay();
     }
 

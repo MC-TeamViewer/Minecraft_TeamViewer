@@ -10,7 +10,8 @@ public enum ConfigPageId {
     COLOR("screen.mc_teamviewer.color_config.title"),
     WAYPOINT("screen.mc_teamviewer.waypoint_config.title"),
     WAYPOINT_SHAPE("screen.mc_teamviewer.waypoint_shape_config.title"),
-    PACKET_CAPTURE("screen.mc_teamviewer.packet_capture.title");
+    PACKET_CAPTURE("screen.mc_teamviewer.packet_capture.title"),
+    DEBUG_SETTINGS("screen.mc_teamviewer.debug_settings.title");
 
     private final String titleKey;
 

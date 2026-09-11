@@ -9,7 +9,6 @@
   "key.category.team_view_relay.general": "TeamViewRelay",
   "hud.mc_teamviewer.traffic.up": "↑ unc%s cmp%s Σunc%s cmp%s",
   "hud.mc_teamviewer.traffic.down": "↓ unc%s cmp%s Σunc%s cmp%s",
-  
   "screen.mc_teamviewer.config.title": "TeamViewRelay Configuration",
   "screen.mc_teamviewer.config.value": "%s: %s",
   "screen.mc_teamviewer.config.url": "Server URL",
@@ -110,7 +109,6 @@
   "screen.mc_teamviewer.config.connection_failed_short": "Connection failed (hover for details)",
   "screen.mc_teamviewer.config.save_required_hint": "Server settings updated. Click Save to apply",
   "screen.mc_teamviewer.config.unknown_error": "Unknown error",
-  
   "screen.mc_teamviewer.color_config.title": "Color Configuration",
   "screen.mc_teamviewer.color_config.box_color": "Box Color (ARGB format)",
   "screen.mc_teamviewer.color_config.line_color": "Line Color (ARGB format)",
@@ -122,7 +120,7 @@
   "screen.mc_teamviewer.waypoint_shape_config.title": "Mark Shape Configuration",
   "screen.mc_teamviewer.network_config.title": "Network Configuration",
   "screen.mc_teamviewer.packet_capture.title": "Packet Capture",
-  "screen.mc_teamviewer.packet_capture.description": "Export raw WebSocket messages for Wireshark analysis",
+  "screen.mc_teamviewer.packet_capture.description": "Export application-layer traffic to the server (WebSocket frames and QUIC datagrams, decoded plaintext) for Wireshark analysis",
   "screen.mc_teamviewer.packet_capture.start": "Start Capture",
   "screen.mc_teamviewer.packet_capture.stop": "Stop Capture",
   "screen.mc_teamviewer.packet_capture.status_idle": "Status: Idle",
@@ -314,7 +312,6 @@
   "screen.mc_teamviewer.entity_upload.type_hint": "minecraft:zombie",
   "screen.mc_teamviewer.entity_upload.name_hint": "Exact custom entity name",
   "screen.mc_teamviewer.entity_upload.save_rule": "Save rule",
-  
   "screen.mc_teamviewer.config.show_last_seen_players": "Show Last-seen Player Positions",
   "screen.mc_teamviewer.config.show_last_seen_players.tooltip": "Off by default. Shows authoritative last positions and local client times in world rendering and supported maps; network data remains UTC milliseconds.",
   "screen.mc_teamviewer.config.show_last_seen_boxes": "Last-seen Position Boxes",
@@ -325,5 +322,13 @@
   "connection.status.connecting": "Connecting",
   "connection.status.failed": "Failed",
   "connection.status.disconnected": "Disconnected",
-  "connection.status.connected_handshaking": "Connected, handshaking"
+  "connection.status.connected_handshaking": "Connected, handshaking",
+  "screen.mc_teamviewer.config.debug_settings": "Debug Settings",
+  "screen.mc_teamviewer.debug_settings.title": "Debug Settings",
+  "screen.mc_teamviewer.debug_settings.compression_suite": "Compression Suite",
+  "screen.mc_teamviewer.debug_settings.ws_plain_no_deflate": "No permessage-deflate on WS in plain mode",
+  "screen.mc_teamviewer.debug_settings.hint": "Compression suite changes take effect on the next connection",
+  "screen.mc_teamviewer.debug_settings.suite.plain": "plain",
+  "screen.mc_teamviewer.debug_settings.suite.zstd": "zstd",
+  "screen.mc_teamviewer.debug_settings.suite.zstd_dict": "zstd-dict"
 }

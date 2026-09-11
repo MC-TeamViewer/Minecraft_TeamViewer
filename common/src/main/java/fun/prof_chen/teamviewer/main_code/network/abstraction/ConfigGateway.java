@@ -28,4 +28,14 @@ public interface ConfigGateway {
     default String getExternalRelationSyncMode() {
         return "on_demand";
     }
+
+    /** 压缩协议套:plain / zstd / zstd-dict(默认)。 */
+    default String getCompressionSuite() {
+        return TransportOptions.SUITE_ZSTD_DICT;
+    }
+
+    /** plain 套下 WS 门不协商 permessage-deflate。 */
+    default boolean isWsPlainNoDeflate() {
+        return false;
+    }
 }

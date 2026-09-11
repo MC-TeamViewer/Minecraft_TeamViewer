@@ -24,6 +24,7 @@ public final class WebSocketCaptureWriter implements Closeable {
     private static final int LINKTYPE_ETHERNET = 1;
     private static final int ETHERTYPE_IPV4 = 0x0800;
     private static final int IP_PROTOCOL_TCP = 6;
+    private static final int IP_PROTOCOL_UDP = 17;
     private static final int CLIENT_PORT = 39051;
     private static final int DEFAULT_CLIENT_IP = ipv4(127, 0, 0, 1);
     private static final int DEFAULT_SERVER_IP = ipv4(127, 0, 0, 1);
@@ -118,6 +119,17 @@ public final class WebSocketCaptureWriter implements Closeable {
         writeWebSocketMessage(false, true, text == null ? new byte[0] : text.getBytes(StandardCharsets.UTF_8));
     }
 
+    /** datagram(QUIC 门上下行)以独立 UDP 包呈现,载荷是应用层明文 envelope
+     * (上行恒 plain、下行已在传输层解压),与同文件的 WS 帧共用 4 元组;
+     * 无需序号跟踪,校验和按 UDP 伪头计算。 */
+    public synchronized void writeClientDatagramMessage(byte[] payload) throws IOException {
+        writeDatagram(true, payload);
+    }
+
+    public synchronized void writeServerDatagramMessage(byte[] payload) throws IOException {
+        writeDatagram(false, payload);
+    }
+
     @Override
     public synchronized void close() throws IOException {
         if (closed) {
@@ -177,6 +189,20 @@ public final class WebSocketCaptureWriter implements Closeable {
         }
         writeServerToClientPacket(TCP_FLAG_PSH | TCP_FLAG_ACK, frame);
         serverSeq += frame.length;
+    }
+
+    private void writeDatagram(boolean clientToServer, byte[] payload) throws IOException {
+        if (closed) {
+            return;
+        }
+        byte[] data = payload == null ? new byte[0] : payload;
+        if (clientToServer) {
+            writeEnhancedPacketBlock(buildEthernetIpv4UdpPacket(
+                    DEFAULT_CLIENT_IP, serverIp, CLIENT_PORT, serverPort, data));
+            return;
+        }
+        writeEnhancedPacketBlock(buildEthernetIpv4UdpPacket(
+                serverIp, DEFAULT_CLIENT_IP, serverPort, CLIENT_PORT, data));
     }
 
     private byte[] buildHandshakeRequest() {
@@ -330,6 +356,66 @@ public final class WebSocketCaptureWriter implements Closeable {
 
         short tcpChecksum = tcpChecksum(packet, tcpHeaderStart, tcpHeaderLength + applicationPayload.length, sourceIp, destinationIp);
         ByteBuffer.wrap(packet, tcpChecksumPosition, 2).order(ByteOrder.BIG_ENDIAN).putShort(tcpChecksum);
+        return packet;
+    }
+
+    /** 包级私有仅供测试:Ethernet + IPv4(proto 17) + UDP,校验和按伪头计算。 */
+    static byte[] buildEthernetIpv4UdpPacket(
+            int sourceIp,
+            int destinationIp,
+            int sourcePort,
+            int destinationPort,
+            byte[] payload
+    ) {
+        byte[] applicationPayload = payload == null ? new byte[0] : payload;
+        int ethernetLength = 14;
+        int ipHeaderLength = 20;
+        int udpHeaderLength = 8;
+        int udpLength = udpHeaderLength + applicationPayload.length;
+        int packetLength = ethernetLength + ipHeaderLength + udpLength;
+        ByteBuffer buffer = ByteBuffer.allocate(packetLength);
+        buffer.order(ByteOrder.BIG_ENDIAN);
+
+        // Ethernet header
+        putMac(buffer, new byte[] {0x02, 0x00, 0x00, 0x00, 0x00, 0x01});
+        putMac(buffer, new byte[] {0x02, 0x00, 0x00, 0x00, 0x00, 0x02});
+        buffer.putShort((short) ETHERTYPE_IPV4);
+
+        int ipHeaderStart = buffer.position();
+        buffer.put((byte) 0x45);
+        buffer.put((byte) 0x00);
+        buffer.putShort((short) (ipHeaderLength + udpLength));
+        buffer.putShort((short) ThreadLocalRandom.current().nextInt(0, 0x10000));
+        buffer.putShort((short) 0x4000);
+        buffer.put((byte) 64);
+        buffer.put((byte) IP_PROTOCOL_UDP);
+        int ipChecksumPosition = buffer.position();
+        buffer.putShort((short) 0);
+        buffer.putInt(sourceIp);
+        buffer.putInt(destinationIp);
+
+        int udpHeaderStart = buffer.position();
+        buffer.putShort((short) sourcePort);
+        buffer.putShort((short) destinationPort);
+        buffer.putShort((short) udpLength);
+        int udpChecksumPosition = buffer.position();
+        buffer.putShort((short) 0);
+        buffer.put(applicationPayload);
+
+        byte[] packet = buffer.array();
+        short ipChecksum = checksum(packet, ipHeaderStart, ipHeaderLength);
+        ByteBuffer.wrap(packet, ipChecksumPosition, 2).order(ByteOrder.BIG_ENDIAN).putShort(ipChecksum);
+
+        ByteBuffer pseudoHeader = ByteBuffer.allocate(12 + udpLength);
+        pseudoHeader.order(ByteOrder.BIG_ENDIAN);
+        pseudoHeader.putInt(sourceIp);
+        pseudoHeader.putInt(destinationIp);
+        pseudoHeader.put((byte) 0);
+        pseudoHeader.put((byte) IP_PROTOCOL_UDP);
+        pseudoHeader.putShort((short) udpLength);
+        pseudoHeader.put(packet, udpHeaderStart, udpLength);
+        short udpChecksum = checksum(pseudoHeader.array(), 0, pseudoHeader.array().length);
+        ByteBuffer.wrap(packet, udpChecksumPosition, 2).order(ByteOrder.BIG_ENDIAN).putShort(udpChecksum);
         return packet;
     }
 
