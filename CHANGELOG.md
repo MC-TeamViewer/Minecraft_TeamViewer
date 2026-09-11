@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.10.0-alpha.6-proto0.9.0 - 2026-09-11
+
+- 诊断日志:QUIC 下行泵安装时打印读到的 ALPN 与是否安装 zstd 解码器;首字节到达
+  打印一条;连接建立打印本地地址(定位重叠连接/幽灵连接)。用于定位"业务握手中"
+  卡死(服务端 writer_ended、mod 收不到 ack)的确切环节。
+
+
 ## v0.10.0-alpha.5-proto0.9.0 - 2026-09-10
 
 - QUIC 门接入下行 movement datagram 与 zstd 字典套(协议 `0.9.0-alpha.6`,后端需 `1.2.0-alpha.10` 及以上):

@@ -8,6 +8,8 @@ import fun.prof_chen.teamviewer.main_code.network.proto.door.DatagramDictOffer;
 import fun.prof_chen.teamviewer.main_code.network.proto.door.DatagramDictReady;
 import fun.prof_chen.teamviewer.main_code.network.proto.door.DoorControlFrame;
 import fun.prof_chen.teamviewer.main_code.network.transport.ZstdStreamDecoder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -66,6 +68,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 失败按丢包静默丢弃。系统代理对 QUIC 无语义,忽略。</p>
  */
 final class QuicTransportCore {
+    private static final Logger LOGGER = LoggerFactory.getLogger(QuicTransportCore.class);
     static final String ALPN = "teamviewrelay/v1";
     static final String ALPN_ZSTD = ALPN + "+zstd";
     static final String ALPN_ZSTD_DICT = ALPN + "+zstd-dict";
@@ -248,6 +251,8 @@ final class QuicTransportCore {
                 return;
             }
             quicChannel = (QuicChannel) future.getNow();
+            LOGGER.info("QUIC connection established: local={}",
+                    udpChannel.localAddress());
             Future<QuicStreamChannel> uplinkFuture = quicChannel.createStream(
                     QuicStreamType.BIDIRECTIONAL,
                     new ChannelInboundHandlerAdapter() {
@@ -303,6 +308,10 @@ final class QuicTransportCore {
                 zstdDecoder = decoder;
             }
             final ZstdStreamDecoder downlinkDecoder = decoder;
+            LOGGER.info("QUIC downlink pump installed: alpn='{}', zstdDecoder={}",
+                    alpn, decoder != null ? "installed" : "none(plain)");
+            final java.util.concurrent.atomic.AtomicBoolean firstBytesLogged =
+                    new java.util.concurrent.atomic.AtomicBoolean();
             streamContext.pipeline().addLast(new ChannelInboundHandlerAdapter() {
                 @Override
                 public void channelRead(ChannelHandlerContext context, Object message) {
@@ -317,6 +326,9 @@ final class QuicTransportCore {
                     byte[] chunk = new byte[buffer.readableBytes()];
                     buffer.readBytes(chunk);
                     buffer.release();
+                    if (firstBytesLogged.compareAndSet(false, true)) {
+                        LOGGER.info("QUIC downlink first bytes received: {} bytes", chunk.length);
+                    }
                     try {
                         reassembler.feed(chunk, 0, chunk.length);
                         byte[] payload;
